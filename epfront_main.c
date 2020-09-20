@@ -28,13 +28,18 @@
 #include <linux/kprobes.h>
 #include <asm/traps.h>
 
+#define EPFRONT_DUMP_QUEUES_INTERVAL_MSEC (1000)
 #define EPFRONT_GET_DEVNAME_TIME_OUT (2 * HZ)
 #define EPFRONT_GET_DEVNAME_INTERVAL_MSEC (10)
-#define EPFRONT_PRI_RESET_BACK_INTERVAL_MSEC (10000)
-#define EPFRONT_PRI_BACK_RDY_INTERVAL_MSEC (30000)
+//#define EPFRONT_PRI_RESET_BACK_INTERVAL_MSEC (10000)
+#define EPFRONT_PRI_RESET_BACK_INTERVAL_MSEC (60000*10)
+//#define EPFRONT_PRI_BACK_RDY_INTERVAL_MSEC (30000)
+#define EPFRONT_PRI_BACK_RDY_INTERVAL_MSEC (60000*10)
+#define EPFRONT_SV_THREAD_ERR_INTERVAL_MSEC (60000*10)
+
 #define EPFRONT_SV_SUSPEND_TIMOUT_MSEC (1800000)
 #define EPFRONT_WAIT_QUEUECOMMAND_MSEC (10000)
-#define EPFRONT_WAIT_IO_COMPLETE_MSEC (90000)
+#define EPFRONT_WAIT_IO_COMPLETE_MSEC (120000)
 #define EPFRONT_EH_ABORT_TIMEOUT (120 * HZ)
 #define EPFRONT_EH_RESET_TIMEOUT (240 * HZ)
 #define EPFRONT_ROAD_LEN 512
@@ -44,6 +49,8 @@
 #define EPFRONT_SV_GET_TYPE(x) ((x) & 0xff)
 
 #define EPFRONT_UP_TO_MULTY4(x) ( ((x) + 4) & (~0x03) )
+
+#define EPFRONT_PRINT_RETRY_INTERVAL_MSEC (1000*3600*24)
 
 typedef struct epfront_sv_controler{
 	spinlock_t lock;
@@ -75,7 +82,10 @@ typedef struct epfront_lun_controler{
 	struct list_head list;
 	struct list_head async_list;
     struct list_head async_devname_list;
+
+	unsigned int size;
 	unsigned int mask;
+	unsigned long* lun_bits;
 	struct epfront_lun_list** table;
 }epfront_lun_controler_t;
 
@@ -86,20 +96,27 @@ static int epfront_aer_recv_linkdown(void* data);
 static int epfront_aer_recv_io_switch(void* data);
 
 static int epfront_sv_back_notify_probe(void *data);
+static int epfront_sv_reset_handle(void* data);
 static int epfront_sv_rename_luns(void* data);
 static int epfront_sv_sync_disk(void* data);
 static int epfront_sv_aer_handle(void* data);
 static int epfront_sv_start_trans(void* data);
 static int epfront_sv_sync_devname(void* data);
 
+void epfront_set_queue_off(void);
+static int epfront_wait_queue_off(int msec);
+static void epfront_handle_pending_io(void);
 static void epfront_trans_way_exit(void);
 static int epfront_trans_way_init(void);
 static int epfront_sync_result(enum ep_sync_type res);
+static int epfront_sync_reset_back_state(void);
+static inline int epfront_do_stop_trans(unsigned long status);
 
 static epfront_sv_controler_t g_sv_ctrl;
 static epfront_notify_controler_t g_notify_ctrl;
 static epfront_aer_controler_t g_aer_ctrl;
 static epfront_lun_controler_t g_lun_ctrl = {
+	.lun_bits = NULL,
 	.table = NULL
 };
 
@@ -110,7 +127,7 @@ static unsigned int use_cluster = 0;
 static DECLARE_WAIT_QUEUE_HEAD(wait);
 
 //log level
-int epfront_loglevel = EPFRONT_LOG_DEBUG;
+int epfront_loglevel = EPFRONT_LOG_INFO;
 
 unsigned long epfront_status = 0;
 
@@ -148,12 +165,9 @@ void epfront_io_handle(unsigned long data);
 struct epfront_io_list* epfront_create_io_lst(struct ep_io_cqe* cqe_data);
 
 int task_idx = 0;
-struct list_head io_list[IO_LIST_N];
-spinlock_t io_list_lock[IO_LIST_N];
-DECLARE_TASKLET(io_tasklet_0, epfront_io_handle, 0);
-DECLARE_TASKLET(io_tasklet_1, epfront_io_handle, 1);
-DECLARE_TASKLET(io_tasklet_2, epfront_io_handle, 2);
-DECLARE_TASKLET(io_tasklet_3, epfront_io_handle, 3);
+static struct list_head io_list[IO_LIST_N];
+static spinlock_t io_list_lock[IO_LIST_N];
+static struct tasklet_struct io_tasklet[IO_LIST_N];
 
 
 /*******************************CRC32 MODULE start*********************************/
@@ -233,24 +247,23 @@ static int epfront_crc32(const void *p, u32 len, u32* p_crc)
 /*****************************************************************************
 Function    : crc_calc_scsi_sgl
 Description : crc32 calculation function for scsi sgl
-Input       : struct scsi_cmnd * sc
+Input       : struct scatterlist* scsi_sg
+Input       : int count
 Output      : u32
 Return      : u32 crc32_result
 *****************************************************************************/
-static u32 crc_calc_scsi_sgl(struct scsi_cmnd* sc)
+static u32 crc_calc_scsi_sgl(struct scatterlist* scsi_sg, int count)
 {
     u32 crc32 = CRC32_SEED;
-    struct scatterlist* scsi_sg = NULL;
     struct scatterlist* ite_sg = NULL;
 	u64 scsi_sg_paddr;
 	u32 scsi_sg_len;
-	u32 i;
+	int i;
 	
-    if(unlikely(!sc))
+    if(unlikely(!scsi_sg))
 		return crc32;
-	
-	scsi_sg = scsi_sglist(sc);
-	for_each_sg(scsi_sg, ite_sg, scsi_sg_count(sc), i){
+
+	for_each_sg(scsi_sg, ite_sg, count, i){
 		scsi_sg_paddr = sg_dma_address(ite_sg);
 		scsi_sg_len = sg_dma_len(ite_sg);
 		(void)epfront_crc32(&scsi_sg_paddr, sizeof(u64), &crc32);
@@ -488,6 +501,7 @@ Return      : VOS_OK on success or error code on failure
 *****************************************************************************/
 static int epfront_sv_thread(void* data)
 {
+    static unsigned long sv_thread_err_interval = 0;
     int ret;
 	unsigned int out_size;
 	unsigned char buff[EPFRONT_SV_MAX_DATA_SIZE + 16];
@@ -518,7 +532,8 @@ static int epfront_sv_thread(void* data)
 			(void)schedule_timeout((long)EPFRONT_SV_SUSPEND_TIME);
 			continue;
 		}
-		
+		set_current_state(TASK_RUNNING);
+
 		sv_ctrl->suspend_complete = 0;
 
 		task_pri = 0;
@@ -556,7 +571,10 @@ static int epfront_sv_thread(void* data)
 
 			ret = sv_task->func((void*)sv_task->data);
             if(ret){
-				epfront_err_limit("sv_type[%d] function's ret[%d]", sv_task->type, ret);
+                if(printk_timed_ratelimit(&sv_thread_err_interval,EPFRONT_SV_THREAD_ERR_INTERVAL_MSEC)){
+                    epfront_info("sv_type[%d] function's ret[%d]", sv_task->type, ret);
+                }
+				//epfront_err_limit("sv_type[%d] function's ret[%d]", sv_task->type, ret);
         	}
 
 #ifdef EPFRONT_DEBUG
@@ -811,25 +829,19 @@ static int ep_send_notify(module_notify_t* m_notify, module_notify_data_t* data,
 
     if(len){
 		if(!data || len <= sizeof(module_notify_data_t)){
-			epfront_err("illegal para: data_len is %u", len);
+			epfront_err("illegal para: opcode[0x%x], data_len is %u", m_notify->opcode, len);
 			return -EINVAL;
 		}
 		if(/*global_config.crc32 && */(DMA_TO_DEVICE == m_notify->direction
 			|| DMA_BIDIRECTIONAL == m_notify->direction)){
 			data->crc32 = CRC32_SEED;
 			(void)epfront_crc32(data->data, len - sizeof(module_notify_data_t), &(data->crc32));
-    	}
+		}
 	}
 	
 	ret = ep_send_cmd(m_notify, sizeof(*m_notify), &result, timeout);
 	if(ret){
-		epfront_err("send_cmd failed, type[0x%x], ret[%d]", m_notify->opcode, ret);
-	} else{
-	    ret = result;
-	}
-
-	if(result){
-		epfront_err("send_cmd type[0x%x], result[%d]", m_notify->opcode, result);
+		return ret;
 	}
 
 	if(len){
@@ -840,14 +852,13 @@ static int ep_send_notify(module_notify_t* m_notify, module_notify_data_t* data,
 			(void)epfront_crc32(data->data,  len - sizeof(module_notify_data_t), &crc32);
 			if(data->crc32 != crc32){
 				atomic_inc(&g_stats.crc_err_notify);
-				epfront_err("back crc32[%u] != front crc32[%u]", data->crc32, crc32);
+				epfront_err("opcode[0x%x], back crc32[%u] != front crc32[%u]", m_notify->opcode, data->crc32, crc32);
 				return -EIO;
 			}
-			epfront_info("back crc32[%u], front crc32[%u]", data->crc32, crc32);
 		}
 	}
 
-    return ret;
+	return result;
 }
 
 /*****************************************************************************
@@ -969,20 +980,45 @@ static inline void epfront_restore_lun_tbl(struct list_head *list)
 }
 
 /*****************************************************************************
-Function    : epfront_get_tetrad_by_uniq
-Description : get disk's tetrad by back_uniq_id
+Function    : epfront_get_lun_bit
+Description : get lun bit
 Input       : u32 back_uniq_id
-              u32 * channel
-              u32 * id
-              u32 * lun
+Output      : int
+Return      : int
+*****************************************************************************/
+static inline int epfront_get_lun_bit(u32 back_uniq_id)
+{
+    unsigned long loc;
+	epfront_lun_controler_t* lun_ctrl = &g_lun_ctrl;
+
+	do{
+		loc = find_next_zero_bit(lun_ctrl->lun_bits, (unsigned long)lun_ctrl->size, (unsigned long)back_uniq_id);
+		if(loc >= lun_ctrl->size){
+			loc = find_next_zero_bit(lun_ctrl->lun_bits, (unsigned long)lun_ctrl->size, (unsigned long)0);
+			if(loc >= lun_ctrl->size)
+			    return -ENOMEM;
+		}
+	}while(test_and_set_bit((int)loc, lun_ctrl->lun_bits) != 0);
+
+	return (int)loc;
+}
+
+/*****************************************************************************
+Function    : epfront_put_lun_bit
+Description : put lun bit
+Input       : unsigned int loc
 Output      : void
 Return      : void
 *****************************************************************************/
-static inline void epfront_get_tetrad_by_uniq(u32 back_uniq_id, u32* channel, u32* id, u32* lun)
+static inline void epfront_put_lun_bit(unsigned int loc)
 {
-    *channel = 65535;
-	*id = back_uniq_id;
-	*lun = 0;
+	epfront_lun_controler_t* lun_ctrl = &g_lun_ctrl;
+
+	if(loc < lun_ctrl->size){
+		clear_bit((int)loc, lun_ctrl->lun_bits);
+	} else{
+		epfront_err("bit location is illegal: %d", loc);
+	}
 }
 
 /*****************************************************************************
@@ -1063,15 +1099,24 @@ Return      : void
 *****************************************************************************/
 static inline void epfront_scmd_printk(struct scsi_cmnd *sc)
 {
+    static unsigned long print_lst_time = 0;
+    static unsigned long ioErrRetry_cnt = 0;
     if(unlikely(!sc)){
 		epfront_err_limit("sc is NULL");
 		return ;
 	}
-	
+	ioErrRetry_cnt++; 
     if(unlikely(sc->retries)){
+        /*
 		epfront_err_limit("scsi_cmnd retrying: serial_number[%lu] retries[%d], allowed[%d]",
 			sc->serial_number, sc->retries, sc->allowed);
-		scsi_print_command(sc);
+		*/
+        if(0 == print_lst_time || time_after(jiffies, print_lst_time + msecs_to_jiffies(EPFRONT_PRINT_RETRY_INTERVAL_MSEC))){
+			epfront_info("scsi_cmnd retrying: serial_number[%lu] retries[%d], allowed[%d], errRetryCnt[%lu]",sc->serial_number, sc->retries, sc->allowed,ioErrRetry_cnt);
+			print_lst_time = jiffies;
+            ioErrRetry_cnt = 0;
+            scsi_print_command(sc);
+	     }
 	}
 }
 
@@ -1476,96 +1521,6 @@ static void resume_all_host(void)
 }
 
 /*****************************************************************************
-Function    : epfront_host_handle_pending_io
-Description : handle pending io of host
-Input       : struct epfront_host_ctrl * h
-Output      : void
-Return      : void
-*****************************************************************************/
-static void epfront_host_handle_pending_io(struct epfront_host_ctrl* h)
-{
-	struct epfront_cmnd_list *c = NULL , *n = NULL;
-	struct epfront_lun_list* lun_lst = NULL;
-	struct scsi_cmnd *sc = NULL;
-	int requeue_count = 0, softerr_count = 0;
-	
-    if(unlikely(NULL == h)){
-		epfront_err("para illegal");
-		return ;
-	}
-
-	spin_lock_irq(&h->lock);
-	list_for_each_entry_safe(c, n, &h->cmdQ, list){
-		list_del_init(&c->list);
-		
-		if(!test_bit(CMD_STAT_SEND_COMP, &c->status)
-			|| test_and_set_bit(CMD_STAT_RECV_RESP, &c->status)){
-			epfront_err_limit("c has be handle, status[0x%lx]", c->status);
-		    atomic_inc(&h->conflict_num);
-			continue ;
-		}
-
-		sc = c->scsi_cmd;
-		if(!sc){
-			epfront_err("fatal error, host:%u sn:%u, stat = 0x%lx", h->sys_host_id, c->cmd_sn, c->status);
-			epfront_host_cmd_free(c);
-			continue;
-		}
-
-		free_cmd_resource(c);
-
-		if(sc->device && sc->device->sdev_state == SDEV_BLOCK){
-			sc->result = (DID_REQUEUE << 16);
-			++requeue_count;
-		} else{
-			sc->result = (DID_SOFT_ERROR << 16);
-			++softerr_count;
-		}
-		sc->scsi_done(sc);
-
-	    set_bit(CMD_STAT_DONE, &c->status);
-	    wake_up(&wait);
-		
-		lun_lst = epfront_get_lun_list(&g_lun_ctrl, c->back_uniq_id);
-	    if(unlikely(!lun_lst)){
-			epfront_err_limit("lun_lst is invalid, back_uniq_id[%u]", c->back_uniq_id);
-		} else{
-		    atomic_inc(&lun_lst->abort_num);
-		}
-	
-		epfront_host_cmd_free(c);
-		
-	}
-	spin_unlock_irq(&h->lock);
-
-	epfront_info("handle host %d io complete, requeue[%d], softerr[%d]",
-		h->sys_host_id, requeue_count, softerr_count);
-}
-
-/*****************************************************************************
-Function    : epfront_handle_pending_io
-Description : handle pending io
-Input       : void
-Output      : void
-Return      : void
-*****************************************************************************/
-static void epfront_handle_pending_io(void)
-{
-	unsigned int i;
-	struct epfront_host_ctrl* h = NULL;
-
-	for (i = 0;  i< epfront_host_n; i++) {
-		h = epfront_hosts[i];
-		if(unlikely(!h)){
-			epfront_err("epfront_hosts[%d] is NULL", i);
-			continue;
-		}
-		if(h->scsi_host)
-			epfront_host_handle_pending_io(h);
-	}
-}
-
-/*****************************************************************************
 Function    : epfront_rmv_async_disk
 Description : remove disk from async_list by back_uniq_id
 Input       : u32 back_uniq_id
@@ -1599,7 +1554,10 @@ Return      : void
 *****************************************************************************/
 static inline void epfront_free_lun_list(struct epfront_lun_list* lun_lst)
 {
-    if(!IS_ERR_OR_NULL(lun_lst)) kfree(lun_lst);
+    if(!IS_ERR_OR_NULL(lun_lst)){
+		epfront_put_lun_bit((int)lun_lst->id);
+		kfree(lun_lst);
+	}
 }
 
 /*****************************************************************************
@@ -1613,6 +1571,7 @@ Return      : struct epfront_lun_list*
 static struct epfront_lun_list* epfront_alloc_lun_list(u32 back_uniq_id, char* vol_name)
 {
     int ret = 0;
+	int loc = 0;
 	u32 channel = 0;
 	u32 id = 0;
 	u32 lun = 0;
@@ -1633,15 +1592,25 @@ static struct epfront_lun_list* epfront_alloc_lun_list(u32 back_uniq_id, char* v
 		ret = -EEXIST;
 		goto err_out;
 	}
-	
-    epfront_get_tetrad_by_uniq(back_uniq_id, &channel, &id, &lun);
-	
+
+	loc = epfront_get_lun_bit(back_uniq_id);
+	if(loc < 0){
+		epfront_err("epfront_get_lun_bit failed, ret[%d], back_uniq_id[%u]",
+			loc, back_uniq_id);
+		ret = -ENOMEM;
+		goto err_out;
+	}
+
+	channel = 65535;
+	id = loc;
+	lun = 0;
+
 	host_index = epfront_get_host_by_uniq(back_uniq_id);
 	h = epfront_hosts[host_index];
 	if(unlikely(!h || !h->scsi_host)){
 		epfront_err("can't happen, host in illegal state, host_index is %d", host_index);
 		ret = -EFAULT;
-		goto err_out;
+		goto put_lun_bit;
 	}
 	
 	sh = h->scsi_host;
@@ -1652,14 +1621,14 @@ static struct epfront_lun_list* epfront_alloc_lun_list(u32 back_uniq_id, char* v
 		epfront_err("divice has exist, channel[%u], id[%u], lun[%u]",
 			channel, id, lun);
 		ret = -EEXIST;
-		goto err_out;
+		goto put_lun_bit;
 	}
 
 	lun_lst = kzalloc(sizeof(*lun_lst), GFP_KERNEL);
 	if(NULL == lun_lst){
 		epfront_err("alloc for lun_lst failed, size[%lu]", sizeof(*lun_lst));
 		ret = -ENOMEM;
-		goto err_out;
+		goto put_lun_bit;
 	}
 	
     //for lun_list ,must before scsi_add_device, because scsi_cmd_handle need host_index
@@ -1682,12 +1651,45 @@ static struct epfront_lun_list* epfront_alloc_lun_list(u32 back_uniq_id, char* v
 	}
 
 	return lun_lst;
-	
+
+put_lun_bit:
+	epfront_put_lun_bit(loc);
 err_out:
 	epfront_err("epfront_get_lun_list failed, back_uniq_id[%u], ret[%d]", back_uniq_id, ret);
 	return ERR_PTR((long)ret);
 }
 
+
+struct epfront_getdents{
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)))
+    struct dir_context ctx;
+#endif
+	char disk_name[EP_DEV_NAME_LEN];
+	int found;
+};
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0) || LINUX_VERSION_CODE==200740			
+static int filldir_find(void * __buf, const char * name, int len,
+			loff_t pos, u64 ino, unsigned int d_type)
+{
+    struct epfront_getdents* dents = (struct epfront_getdents*)__buf;
+#else
+static int filldir_find(struct dir_context *ctx, const char *name, int len,
+			loff_t pos, u64 ino, unsigned int d_type)
+{
+	struct epfront_getdents *dents =
+		container_of(ctx, struct epfront_getdents, ctx);
+#endif
+
+	if(unlikely(!name)) return -EINVAL;
+	if(name[0] != 's') return 0;
+	if(name[1] != 'd') return 0;
+	
+	strncpy(dents->disk_name, name, EP_DEV_NAME_LEN - 1);
+	dents->found = 1;
+
+	return 0;
+}
 
 /*****************************************************************************
 Function    : epfront_get_dev_name
@@ -1700,15 +1702,21 @@ Return      : VOS_OK on success or error code on failure
 static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_disk_name* diskname)
 {
     int ret = 0;
-    struct dentry* d1;
     struct file* filp = NULL;
-    struct list_head* pchild;
     u32 host;
     u32 channel;
     u32 id;
     u32 lun;
     char road[EPFRONT_ROAD_LEN] = "";
     unsigned long timeout = jiffies + EPFRONT_GET_DEVNAME_TIME_OUT;
+
+    struct epfront_getdents dents = {
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)))
+        .ctx.actor = filldir_find,
+#endif
+		.disk_name = "",
+		.found = 0,
+    };
 
     host = lun_lst->host;
     channel = lun_lst->channel;
@@ -1719,52 +1727,38 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
 
     do
     {
-        filp = filp_open(road, O_RDONLY, 0);
-        if (IS_ERR(filp))
-        {
+        if(IS_ERR_OR_NULL(filp))
+			filp = filp_open(road, O_RDONLY, 0);
+
+        if (!IS_ERR_OR_NULL(filp)){
+
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)))
+            ret = iterate_dir(filp, &dents.ctx);
+#else
+            ret = vfs_readdir(filp, filldir_find, &dents);
+#endif
+/*
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0)) && (RHEL_RELEASE_CODE != 1797))			
+			ret = vfs_readdir(filp, filldir_find, &dents);
+#else
+			ret = iterate_dir(filp, &dents.ctx);
+#endif
+*/
+			if(dents.found){
+				ret = 0;
+
+				(void)snprintf(lun_lst->dev_name, EP_DEV_NAME_LEN, "/dev/%s", dents.disk_name);
+				if(NULL != diskname){
+					memset(diskname->dev_name, 0, EP_DEV_NAME_LEN);
+					(void)snprintf(diskname->dev_name, EP_DEV_NAME_LEN, "/dev/%s", dents.disk_name);
+				}
+				goto out;
+			}
+    	} else{
             epfront_info_limit("openfile:%s failed", road);
             msleep(EPFRONT_GET_DEVNAME_INTERVAL_MSEC);
             continue;
         }
-        if (NULL == filp->f_path.dentry)
-        {
-            epfront_info_limit("dentry not exist");
-            (void)filp_close(filp, NULL);
-            filp = NULL;
-            msleep(EPFRONT_GET_DEVNAME_INTERVAL_MSEC);
-            continue;
-        }
-        epfront_info_limit("search in dentry: %s", filp->f_path.dentry->d_iname);
-
-        pchild = &filp->f_path.dentry->d_subdirs;
-        if (list_empty(pchild))
-        {
-            epfront_info_limit("list is null in %s", road);
-            (void)filp_close(filp, NULL);
-            filp = NULL;
-            msleep(EPFRONT_GET_DEVNAME_INTERVAL_MSEC);
-            continue;
-        }
-
-        pchild = filp->f_path.dentry->d_subdirs.next;
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 12, 0)
-        d1 = list_entry(pchild, struct dentry, d_u.d_child);
-#else
-        d1 = list_entry(pchild, struct dentry, d_child);
-#endif
-
-        epfront_info_limit("disk [%u:%u:%u:%u] back_uniq_id[%u] devname: %s",
-                     host, channel, id, lun, lun_lst->back_uniq_id, d1->d_iname);
-
-        (void)snprintf(lun_lst->dev_name, EP_DEV_NAME_LEN, "/dev/%s", d1->d_iname);
-
-        if (NULL != diskname)
-        {
-            memset(diskname->dev_name, 0, EP_DEV_NAME_LEN);
-            (void)snprintf(diskname->dev_name, EP_DEV_NAME_LEN, "/dev/%s", d1->d_iname);
-        }
-        goto out;
     } while (time_before(jiffies, timeout));
 
     epfront_err("get_devname timeout: disk [%u:%u:%u:%u] back_uniq_id[%u]",
@@ -2174,10 +2168,11 @@ static int epfront_io_send(struct epfront_cmnd_list* c)
     dma_addr_t cmnd_mapping = 0;
     u32 cmnd_len = 0;
     u32 nents = 0;
-    u32 i = 0;
+    int i = 0;
 	u32 crc32_sgl = 0, crc32_data = 0;
 	u32 c_cmd_index = 0, c_cmd_sn = 0;
     struct epfront_host_ctrl* h = c->h;
+    int num_map_sg = 0;
 	
     BUG_ON(!trans_device);
 
@@ -2214,47 +2209,50 @@ static int epfront_io_send(struct epfront_cmnd_list* c)
     nents = scsi_sg_count(sc);
     if(0 == nents){
 		OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_NONE);
-	} else if(IO_SGL_IN_SQ == nents){
-	    (void)dma_map_sg(trans_device, scsi_sg, (int)nents, sc->sc_data_direction);
-	    io.scsi_sg_paddr = cpu_to_le64(sg_dma_address(ite_sg));
-		io.scsi_sg_len = cpu_to_le32(sg_dma_len(ite_sg));
-		OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_IN_SQ);
-	} else if(IO_SGL_ON_SQ == nents){
-	    (void)dma_map_sg(trans_device, scsi_sg, (int)nents, sc->sc_data_direction);
-	    io.scsi_sg_paddr = cpu_to_le64(sg_dma_address(ite_sg));
-		io.scsi_sg_len = cpu_to_le32(sg_dma_len(ite_sg));
-		ite_sg = sg_next(ite_sg);
-		io.scsi_sg_ex_paddr = cpu_to_le64(sg_dma_address(ite_sg));
-		io.scsi_sg_ex_count = cpu_to_le64((dma_addr_t)sg_dma_len(ite_sg));
-		OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_ON_SQ);
-	} else{
-        (void)dma_map_sg(trans_device, scsi_sg, (int)nents, sc->sc_data_direction);
-        iod = sdi_alloc_iod(nents, scsi_bufflen(sc), GFP_ATOMIC);
-        if(NULL == iod){
-            epfront_err("alloc_iod failed, no memory");
-            ret = -ENOMEM;
+	} else {
+	    num_map_sg = dma_map_sg(trans_device, scsi_sg, (int)nents, sc->sc_data_direction);
+        if(0 == num_map_sg)
             goto unmap_cmnd_addr;
-        }
-        iod_sg = iod->sg;
-		for_each_sg(scsi_sg, ite_sg, nents, i){
-		    memcpy(&iod_sg[i], ite_sg, sizeof(struct scatterlist));
-		}
-		
-        ret = sdi_setup_sgl( iod, scsi_bufflen(sc), GFP_ATOMIC);
-        if(ret < 0){
-            goto unmap_free_iod;
-        }
 
-        io.scsi_sg_ex_paddr = cpu_to_le64(iod->first_dma);
-		io.scsi_sg_ex_count = cpu_to_le32(nents);
-        OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_EX);
+        if(IO_SGL_IN_SQ == num_map_sg){
+	        io.scsi_sg_paddr = cpu_to_le64(sg_dma_address(ite_sg));
+		    io.scsi_sg_len = cpu_to_le32(sg_dma_len(ite_sg));
+		    OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_IN_SQ);
+	    } else if(IO_SGL_ON_SQ == num_map_sg){
+	        io.scsi_sg_paddr = cpu_to_le64(sg_dma_address(ite_sg));
+		    io.scsi_sg_len = cpu_to_le32(sg_dma_len(ite_sg));
+		    ite_sg = sg_next(ite_sg);
+		    io.scsi_sg_ex_paddr = cpu_to_le64(sg_dma_address(ite_sg));
+		    io.scsi_sg_ex_count = cpu_to_le64((dma_addr_t)sg_dma_len(ite_sg));
+		    OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_ON_SQ);
+	    } else{
+            iod = sdi_alloc_iod(num_map_sg, scsi_bufflen(sc), GFP_ATOMIC);
+            if(NULL == iod){
+                epfront_err("alloc_iod failed, no memory");
+                ret = -ENOMEM;
+                goto unmap_sg;
+            }
+            iod_sg = iod->sg;
+		    for_each_sg(scsi_sg, ite_sg, num_map_sg, i){
+		        memcpy(&iod_sg[i], ite_sg, sizeof(struct scatterlist));
+		    }
+		
+            ret = sdi_setup_sgl( iod, scsi_bufflen(sc), GFP_ATOMIC);
+            if(ret < 0){
+                goto unmap_free_iod;
+            }
+
+            io.scsi_sg_ex_paddr = cpu_to_le64(iod->first_dma);
+		    io.scsi_sg_ex_count = cpu_to_le32(num_map_sg);
+            OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_EX);
+	    }
     }
     c->iod = iod;
     c->data_direction = sc->sc_data_direction;
 
     //calc crc: sgl and data
 	if(global_config.crc32)
-		crc32_sgl = crc_calc_scsi_sgl(sc);
+		crc32_sgl = crc_calc_scsi_sgl(scsi_sg, num_map_sg);
 	if(global_config.crc32 && sc->sc_data_direction == DMA_TO_DEVICE)
 		crc32_data = crc_calc_scsi_data(sc);
 
@@ -2296,10 +2294,10 @@ unmap_free_iod:
     if(iod){
         sdi_free_iod(iod);
     }
+unmap_sg:
 	if(nents){
-        dma_unmap_sg(trans_device, scsi_sg, (int)scsi_sg_count(sc), sc->sc_data_direction);
+        dma_unmap_sg(trans_device, scsi_sg, (int)nents, sc->sc_data_direction);
 	}
-
 unmap_cmnd_addr:
     if(!OPCODE_GET_CDB_CTL(io.opcode))
         dma_unmap_single(trans_device, cmnd_mapping, cmnd_len, DMA_TO_DEVICE);
@@ -2373,16 +2371,16 @@ static void epfront_io_recv(struct ep_io_cqe* cqe)
 	switch(status >> 1){
 		case CQE_STATUS_ABORT_SQE:
 			sc_result = DID_SOFT_ERROR << 16;	 //DID_REQUEUE
-			atomic_inc(&lun_lst->crc_error);
-			epfront_err_limit("back crc32 verify error: host_no[%u], cmd_sn[%u], cmd_index[%u],"
+			atomic_inc(&lun_lst->back_abort);
+			epfront_err_limit("back abort: host_no[%u], cmd_sn[%u], cmd_index[%u],"
 				"[%u:%u:%u:%u], back_uniq_id[%u], vol_name[%s]",
 				epfront_ctrl_get_host_no(c->h), c->cmd_sn, c->cmd_index,
 				lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun, lun_lst->back_uniq_id, lun_lst->vol_name);
 			goto SET_RESULT;
 		case CQE_STATUS_CRC32_FAILED:
 			sc_result = DID_SOFT_ERROR << 16;	 //DID_REQUEUE
-			atomic_inc(&lun_lst->back_abort);
-			epfront_err_limit("back abort: host_no[%u], cmd_sn[%u], cmd_index[%u],"
+			atomic_inc(&lun_lst->crc_error);
+			epfront_err_limit("back crc32 verify error: host_no[%u], cmd_sn[%u], cmd_index[%u],"
 				"[%u:%u:%u:%u], back_uniq_id[%u], vol_name[%s]",
 				epfront_ctrl_get_host_no(c->h), c->cmd_sn, c->cmd_index,
 				lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun, lun_lst->back_uniq_id, lun_lst->vol_name);
@@ -2409,22 +2407,27 @@ static void epfront_io_recv(struct ep_io_cqe* cqe)
 SET_RESULT:
 	if (result){
 		c->callback = get_ns_time();
-		epfront_err_limit("bio cmd_index[%u] err, back_uniq_id[%u] lun[%u:%u:%u:%u], "
-			"result[0x%x], handle time: %lu",
-			c->cmd_index, lun_lst->back_uniq_id, lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun,
-			result, c->callback - c->submit);
+		if(epfront_loglevel >= EPFRONT_LOG_DEBUG && printk_ratelimit())
+			epfront_err_limit("bio cmd_index[%u] err, back_uniq_id[%u] lun[%u:%u:%u:%u], "
+				"result[0x%x], handle time: %lu",
+				c->cmd_index, lun_lst->back_uniq_id, lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun,
+				result, c->callback - c->submit);
 		epfront_scmd_printk(sc);
 	}
 
     if(cqe->sense_len){
 		(void)epfront_scsi_get_sense(c);
-		epfront_err_limit("bio cmd_index[%u], back_uniq_id[%u] lun[%u:%u:%u:%u] sense:",
-			c->cmd_index, lun_lst->back_uniq_id, lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun);
-		print_data((char*)c->psense_buffer_virt, cqe->sense_len);
+		if(epfront_loglevel >= EPFRONT_LOG_DEBUG && printk_ratelimit()){
+			epfront_err_limit("bio cmd_index[%u], back_uniq_id[%u] lun[%u:%u:%u:%u] sense:",
+				c->cmd_index, lun_lst->back_uniq_id, lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun);
+			print_data((char*)c->psense_buffer_virt, cqe->sense_len);
+		}
 	}else if(result){
-		epfront_err_limit("origin bio cmd_index[%u], back_uniq_id[%u] lun[%u:%u:%u:%u] sense:",
-			c->cmd_index, lun_lst->back_uniq_id, lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun);
-		print_data((char*)sc->sense_buffer, SCSI_SENSE_BUFFERSIZE);
+		if(epfront_loglevel >= EPFRONT_LOG_DEBUG && printk_ratelimit()){
+			epfront_err_limit("origin bio cmd_index[%u], back_uniq_id[%u] lun[%u:%u:%u:%u] sense:",
+				c->cmd_index, lun_lst->back_uniq_id, lun_lst->host, lun_lst->channel, lun_lst->id, lun_lst->lun);
+			print_data((char*)sc->sense_buffer, SCSI_SENSE_BUFFERSIZE);
+		}
 	}
 	
 	sc->result = (int)result;
@@ -2745,6 +2748,13 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
 		goto out;
 	}
 
+	if(INVALID_BACK_ID == lun_lst->back_uniq_id){
+		//epfront_err_limit("illegal back_uniq_id[%d]", lun_lst->back_uniq_id);
+		sc->result = (DID_BAD_TARGET << 16);
+		done(sc);
+		goto out;
+	}
+
 	c = epfront_host_cmd_alloc(h);
 	if (unlikely(c == NULL)){
 		epfront_err_limit("epfront_cmd_alloc failed");
@@ -2860,13 +2870,11 @@ Return      : VOS_OK on success or error code on failure
 static int epfront_eh_device_reset_handler(struct scsi_cmnd *sc)
 {
     int ret;
+	int left_io;
     struct epfront_host_ctrl* h = NULL;
     struct epfront_cmnd_list* c = NULL;
-	struct epfront_cmnd_list* n = NULL;
 	struct scsi_device* sdev = NULL;
-	struct list_head abort_list;	
-	unsigned long timeout;
-	int count = 0;
+	static unsigned long dump_int = 0;
 
     c = sc_to_cmnd_list(sc);
     if(unlikely(!c)){
@@ -2888,57 +2896,47 @@ static int epfront_eh_device_reset_handler(struct scsi_cmnd *sc)
 		return SUCCESS;
 	}
 	
-	sdev = sc->device;
-	if(unlikely(!sdev)){
-        epfront_err_limit("sdev is NULL");
-        return SUCCESS;
-	}
+	epfront_info("flying io number: %d", atomic_read(&h->cmds_num));
+	
+	ret = wait_event_timeout(wait, list_empty(&h->cmdQ), EPFRONT_EH_RESET_TIMEOUT);
+    if(ret){
+		atomic_inc(&h->reset_succ);
+		epfront_info("wait for flying io success");
+		ret = SUCCESS;
+	} else{
 
-	INIT_LIST_HEAD(&abort_list);
-	
-	spin_lock_irq(&h->lock);
-	list_for_each_entry_safe(c, n, &h->cmdQ, list){
-		sc = c->scsi_cmd;
-		if(unlikely(!sc)){
-			epfront_err_limit("fatal error, host[%u], sn[%u], stat[%lu]", h->sys_host_id, c->cmd_sn, c->status);
-			continue;
+		if(time_after(jiffies, dump_int
+			+ msecs_to_jiffies(EPFRONT_DUMP_QUEUES_INTERVAL_MSEC))){
+			sdi_dump_queues();
+			dump_int = jiffies;
 		}
-		if(sc->device != sdev){
-			continue;
-		}
-		list_del_init(&c->list);
-		list_add_tail(&c->list, &abort_list);
-	}
-	spin_unlock_irq(&h->lock);
-	
-    timeout = jiffies + EPFRONT_EH_RESET_TIMEOUT;
-	
-	spin_lock_irq(&h->lock);
-    while(!list_empty(&abort_list)){
-		c = list_first_entry(&abort_list, typeof(*c), list);
-	    spin_unlock_irq(&h->lock);
 		
-        ret = epfront_abort_cmnd(c);
+		left_io = epfront_sync_reset_back_state();
+		epfront_info("epfront_sync_reset_back_state ret[%d]", left_io);
+
+        /*can not reach sdi, what else can be done?*/
+		epfront_set_queue_off();
+		
+		ret = epfront_wait_queue_off(EPFRONT_WAIT_QUEUECOMMAND_MSEC);
 		if(ret){
-			atomic_inc(&h->reset_fail);
-			return FAILED;
-		}
-		++count;
-		
-		if(time_after(jiffies, timeout)){
-			atomic_inc(&h->reset_fail);
-			return FAILED;
+			epfront_err("can't happen: epfront_wait_queue_off %d msec failed, ret[%d]",
+				EPFRONT_WAIT_QUEUECOMMAND_MSEC, ret);
 		}
 
-		spin_lock_irq(&h->lock);
+		epfront_handle_pending_io();
+		epfront_info("handle pending io done");
+
+		if(left_io < 0){
+			atomic_inc(&h->reset_fail);
+			ret = FAILED;
+		} else{
+			atomic_inc(&h->reset_succ);
+			ret = SUCCESS;
+		}
+        (void)epfront_sv_assign_task(&g_sv_ctrl, SV_RESET_HANDLE, epfront_sv_reset_handle, NULL, 0);
 	}
-	spin_unlock_irq(&h->lock);
-
-    atomic_inc(&h->reset_succ);
-	epfront_info("reset device[%u:%u:%u:%llu]'s io complete, io count[%d]",
-		epfront_ctrl_get_host_no(h), sdev->channel, sdev->id, (u64)sdev->lun, count);
-
-    return SUCCESS;
+	epfront_info("reset handle ret[%d]", ret);
+	return ret;
 }
 
 static struct scsi_host_template epfront_driver_template =
@@ -3259,16 +3257,11 @@ Return      : VOS_OK on success or error code on failure
 *****************************************************************************/
 static int epfront_sync_reset_back_state(void)
 {
-    int ret = 0;
-	
 	module_notify_t m_notify;
 	memset((void*)&m_notify, 0, sizeof(m_notify));
 	m_notify.opcode = EP_NOTIFY_RESET_BACK_STATE;
 
-	ret = ep_send_notify(&m_notify, NULL, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_dbg("ep_send_notify EP_NOTIFY_RESET_BACK_STATE ret[%d]", ret);
-
-	return ret;
+	return ep_send_notify(&m_notify, NULL, EPFRONT_NOTIFY_TIMEOUT);
 }
 
 /*****************************************************************************
@@ -3287,7 +3280,8 @@ static int epfront_sync_check_back_state(u32 state)
 	m_notify.opcode = EP_NOTIFY_CHECK_BACK_STATE;
 
 	ret = ep_send_notify(&m_notify, NULL, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_dbg("ep_send_notify EP_NOTIFY_CHECK_BACK_STATE state[%u], ret[%d]", state, ret);
+	epfront_info_limit("ep_send_notify EP_NOTIFY_CHECK_BACK_STATE state[%u], ret[%d]", state, ret);
+
     if(state == (unsigned int)ret){
 		return 0;
 	} else{
@@ -3305,16 +3299,22 @@ Return      : VOS_OK on success or error code on failure
 static inline int epfront_sync_reset_epback(void)
 {
     int ret;
+    static unsigned long reset_fail_int;
 	
 	ret = epfront_sync_reset_back_state();
 	if(ret){
-		//epfront_err("epfront_sync_reset_back_state failed, ret[%d]", ret);
+		if(printk_timed_ratelimit(&reset_fail_int, EPFRONT_PRI_RESET_BACK_INTERVAL_MSEC)){
+			//epfront_err("epfront_sync_reset_epback failed, ret[%d]", ret);
+            epfront_info("epfront_sync_reset_epback failed, ret[%d]", ret);
+		}
 		return ret;
+	} else{
+		epfront_info_limit("ep_send_notify EP_NOTIFY_RESET_BACK_STATE ret[%d]", ret);
 	}
 
 	ret = epfront_sync_check_back_state(EP_STATE_FRONT_INIT);
 	if(ret){
-		epfront_err("epfront_sync_check_back_state EP_STATE_FRONT_INIT failed, ret[%d]", ret);
+		epfront_err_limit("epfront_sync_check_back_state EP_STATE_FRONT_INIT failed, ret[%d]", ret);
 		return ret;
 	}
 
@@ -3371,7 +3371,7 @@ static int epfront_notify_devname(void)
 	m_notify.paddr_data = notify_ctrl->data_phys;
 
 	ret = ep_send_notify(&m_notify, m_notify_data, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_info("ep_send_notify EP_NOTIFY_SYNC_DEVNAME ret[%d]", ret);
+	epfront_info_limit("ep_send_notify EP_NOTIFY_SYNC_DEVNAME ret[%d]", ret);
 
 	return ret;	
 }
@@ -3426,7 +3426,7 @@ static int epfront_notify_spec_devname(u32 back_uniq_id)
 	m_notify.paddr_data = notify_ctrl->data_phys;
 
 	ret = ep_send_notify(&m_notify, m_notify_data, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_info("ep_send_notify EP_NOTIFY_SYNC_DEVNAME ret[%d]", ret);
+	epfront_info_limit("ep_send_notify EP_NOTIFY_SYNC_DEVNAME ret[%d]", ret);
 
 	return ret;
 }
@@ -3441,20 +3441,28 @@ Return      : VOS_OK on success or error code on failure
 static inline int epfront_quiry_epback_rdy(void)
 {
 	int ret;
+	static unsigned long last_notify_jiffies = 0;
 
 	module_notify_t m_notify;
 	memset((void*)&m_notify, 0, sizeof(m_notify));
 	m_notify.opcode = EP_NOTIFY_IS_BACK_RDY;
 
 	ret = ep_send_notify(&m_notify, NULL, EPFRONT_NOTIFY_TIMEOUT);
-	if(( ret < 0) || (ret > 1)){
-		epfront_err("ep_send_notify EP_NOTIFY_IS_BACK_RDY ret[%d]", ret);
-		return ret;
+
+	if((0 == ret) || (1 == ret)){
+		ret = !ret;
 	}
-	else {
-		//epfront_info("back notify status %d",ret);
-		return !ret;
+	
+	if(ret){
+		if(printk_timed_ratelimit(&last_notify_jiffies, EPFRONT_PRI_BACK_RDY_INTERVAL_MSEC)){
+			//epfront_err("epfront_quiry_epback_rdy failed, ret[%d]", ret);
+			epfront_info("epfront_quiry_epback_rdy failed, ret[%d]", ret);
+		}
+	} else{
+		epfront_info_limit("ep_send_notify EP_NOTIFY_IS_BACK_RDY ret[%d]", ret);
 	}
+
+	return ret;
 }
 
 /*****************************************************************************
@@ -3491,9 +3499,9 @@ static int epfront_sync_global_config(struct ep_global_config* config)
 	m_notify.paddr_data = notify_ctrl->data_phys;
 
 	ret = ep_send_notify(&m_notify, m_notify_data, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_dbg("ep_send_notify EP_NOTIFY_SYNC_CONFIG, ret[%d]", ret);
+	epfront_info_limit("ep_send_notify EP_NOTIFY_SYNC_CONFIG, ret[%d]", ret);
+
 	if(unlikely(ret)){
-		epfront_err("ep_send_notify EP_NOTIFY_SYNC_CONFIG failed, ret[%d]", ret);
 		goto out;
 	}
 	
@@ -3551,7 +3559,6 @@ static int epfront_sync_devname(enum ep_sync_devname_type type, u32 back_uniq_id
 		ret = epfront_notify_spec_devname(back_uniq_id);
 	}
 
-	epfront_info("ep_send_notify EPFRONT_SYNC_DEVNAME ret[%d]", ret);
 	return ret;
 }
 
@@ -3577,7 +3584,8 @@ static int epfront_sync_result(enum ep_sync_type res)
 	m_notify.subcode = res;
 
 	ret = ep_send_notify(&m_notify, NULL, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_dbg("ep_send_notify EP_NOTIFY_SYNC_COMPLETE ret[%d]", ret);
+	epfront_info_limit("ep_send_notify EP_NOTIFY_SYNC_DISK_RESULT ret[%d]", ret);
+
 	if(!ret){
 		g_sync_disk_errreport_flag++;
 	}
@@ -3613,7 +3621,7 @@ static void epfront_remove_lun_from_list(struct list_head *rm_list) {
 		list_del_init(&pos->list);
 		epfront_destroy_lun_sysfs(pos);
 		epfront_info("revmoe lun %s success ",pos->vol_name);
-		kfree(pos);
+		epfront_free_lun_list(pos);
 	}
 }
 
@@ -3872,7 +3880,7 @@ static int epfront_notify_sync_luns(struct list_head *add_list,int *sync_disk_n)
 	m_notify.paddr_data = notify_ctrl->data_phys;
 
 	*sync_disk_n = ep_send_notify(&m_notify, m_notify_data, EPFRONT_NOTIFY_TIMEOUT);
-	epfront_info("ep_send_notify EP_NOTIFY_SYNC_DISK sync_disk_n[%d]", *sync_disk_n);
+	epfront_info_limit("ep_send_notify EP_NOTIFY_SYNC_DISK sync_disk_n[%d]", *sync_disk_n);
 
     sync_disk = (struct ep_aer_disk*)m_notify_data->data;
 	if(*sync_disk_n > 0){
@@ -3933,7 +3941,7 @@ static int epfront_sync_back_disk(void)
 
 	ret = epfront_notify_sync_luns(&add_list,&sync_disk_n);
 	if(ret){
-		epfront_err("sync luns from sdi failed %d",ret);
+		epfront_err("sync luns from sdi failed %d", ret);
 		goto err_out;
 	}
 
@@ -3951,7 +3959,7 @@ static int epfront_sync_back_disk(void)
 		sync_disk_succ_n += epfront_attached_lun_classify(&add_list,&rm_list,&rescan_list);
 
 		//remove luns first,otherwise resume_all_host function will set these luns to running state again
-		epfront_remove_lun_from_list(&rm_list);
+		//epfront_remove_lun_from_list(&rm_list);
 		
         epfront_restore_lun_tbl(&rescan_list);
 
@@ -3972,6 +3980,9 @@ static int epfront_sync_back_disk(void)
 	}
 	
 	resume_all_host();
+
+	epfront_remove_lun_from_list(&rm_list);
+
 	ret = epfront_add_lun_from_list(&add_list,&sync_disk_succ_n,&sync_disk_fail_n);
 	if(ret){
 		epfront_err("epfront_add_lun_from_list failed, ret[%d]", ret);
@@ -4094,11 +4105,11 @@ Return      : void
 *****************************************************************************/
 static void ep_io_queue_callback(void * priv_data, void * cqe_data, u16  len, cqe_status_t * head_info)
 {
-   	struct ep_io_cqe* cqe = cqe_data;
+	struct ep_io_cqe* cqe = cqe_data;
 	struct epfront_io_list* io_lst = NULL;
 	unsigned long flags;
 	
-    if(unlikely(NULL == cqe)){
+	if(unlikely(NULL == cqe)){
 		epfront_err("cqe_data is NULL");
 		return ;
 	}
@@ -4112,26 +4123,11 @@ static void ep_io_queue_callback(void * priv_data, void * cqe_data, u16  len, cq
 		return ;
 	}
 
-    spin_lock_irqsave(&io_list_lock[io_lst->task_index],flags);
+	spin_lock_irqsave(&io_list_lock[io_lst->task_index],flags);
 	list_add_tail(&io_lst->list, &io_list[io_lst->task_index]);
-    spin_unlock_irqrestore(&io_list_lock[io_lst->task_index],flags);
+	spin_unlock_irqrestore(&io_list_lock[io_lst->task_index],flags);
 
-	switch(io_lst->task_index){
-		case 0:
-			tasklet_schedule(&io_tasklet_0);
-			break;
-		case 1:
-			tasklet_schedule(&io_tasklet_1);
-			break;
-		case 2:
-			tasklet_schedule(&io_tasklet_2);
-			break;
-		case 3:
-			tasklet_schedule(&io_tasklet_3);
-			break;
-		default:
-			break;
-	}
+	tasklet_schedule(&io_tasklet[io_lst->task_index]);
 
 	return ;
 }
@@ -4695,6 +4691,123 @@ err_out:
 }
 
 /*****************************************************************************
+Function    : epfront_host_handle_pending_io
+Description : handle pending io of host
+Input       : struct epfront_host_ctrl * h
+Output      : void
+Return      : void
+*****************************************************************************/
+static void epfront_host_handle_pending_io(struct epfront_host_ctrl* h)
+{
+	struct epfront_cmnd_list *c = NULL , *n = NULL;
+	struct epfront_lun_list* lun_lst = NULL;
+	struct scsi_cmnd *sc = NULL;
+	int requeue_count = 0, softerr_count = 0;
+	
+    if(unlikely(NULL == h)){
+		epfront_err("para illegal");
+		return ;
+	}
+
+	spin_lock_irq(&h->lock);
+	list_for_each_entry_safe(c, n, &h->cmdQ, list){
+		list_del_init(&c->list);
+		
+		if(!test_bit(CMD_STAT_SEND_COMP, &c->status)
+			|| test_and_set_bit(CMD_STAT_RECV_RESP, &c->status)){
+			epfront_err_limit("c has be handle, status[0x%lx]", c->status);
+		    atomic_inc(&h->conflict_num);
+			continue ;
+		}
+
+		sc = c->scsi_cmd;
+		if(!sc){
+			epfront_err("fatal error, host:%u sn:%u, stat = 0x%lx", h->sys_host_id, c->cmd_sn, c->status);
+			epfront_host_cmd_free(c);
+			continue;
+		}
+
+		free_cmd_resource(c);
+
+		if(sc->device && sc->device->sdev_state == SDEV_BLOCK){
+			sc->result = (DID_REQUEUE << 16);
+			++requeue_count;
+		} else{
+			sc->result = (DID_SOFT_ERROR << 16);
+			++softerr_count;
+		}
+		sc->scsi_done(sc);
+
+	    set_bit(CMD_STAT_DONE, &c->status);
+	    wake_up(&wait);
+		
+		lun_lst = epfront_get_lun_list(&g_lun_ctrl, c->back_uniq_id);
+	    if(unlikely(!lun_lst)){
+			epfront_err_limit("lun_lst is invalid, back_uniq_id[%u]", c->back_uniq_id);
+		} else{
+		    atomic_inc(&lun_lst->abort_num);
+		}
+	
+		epfront_host_cmd_free(c);
+		
+	}
+	spin_unlock_irq(&h->lock);
+
+	epfront_info("handle host %d io complete, requeue[%d], softerr[%d]",
+		h->sys_host_id, requeue_count, softerr_count);
+}
+
+/*****************************************************************************
+Function    : epfront_handle_pending_io
+Description : handle pending io
+Input       : void
+Output      : void
+Return      : void
+*****************************************************************************/
+static void epfront_handle_pending_io(void)
+{
+	unsigned int i;
+	struct epfront_host_ctrl* h = NULL;
+
+	int index = 0;
+	struct list_head new_head;
+	struct epfront_io_list* io_lst = NULL;
+	struct epfront_io_list* tmp_lst = NULL;
+	unsigned long flags;
+
+	for(index = 0; index < IO_LIST_N; index++){
+		tasklet_disable(&io_tasklet[index]);
+		
+		if( unlikely(!list_empty(&io_list[index])) ){
+			epfront_err_limit("can't happen: io_list[%d] has residual", index);
+			spin_lock_irqsave(&io_list_lock[index],flags);
+			list_replace_init(&io_list[index], &new_head);
+			spin_unlock_irqrestore(&io_list_lock[index],flags);
+		
+			list_for_each_entry_safe(io_lst, tmp_lst, &new_head, list){
+				epfront_io_recv(&io_lst->cqe);
+				list_del_init(&io_lst->list);
+				kfree(io_lst);
+			}
+		}
+	}
+
+	for (i = 0;  i< epfront_host_n; i++) {
+		h = epfront_hosts[i];
+		if(unlikely(!h)){
+			epfront_err("epfront_hosts[%d] is NULL", i);
+			continue;
+		}
+		if(h->scsi_host)
+			epfront_host_handle_pending_io(h);
+	}
+
+	for(index = 0; index < IO_LIST_N; index++){
+		tasklet_enable(&io_tasklet[index]);
+	}
+}
+
+/*****************************************************************************
 Function    : epfront_wait_queue_off
 Description : wait scsi queue off
 Input       : int msec
@@ -4787,13 +4900,13 @@ void epfront_set_linkdown(void)
 }
 
 /*****************************************************************************
-Function    : epfront_stop_trans
+Function    : epfront_do_stop_trans
 Description : stop trans
 Input       : void
 Output      : int
 Return      : VOS_OK on success or error code on failure
 *****************************************************************************/
-int epfront_stop_trans(unsigned long status)
+static inline int epfront_do_stop_trans(unsigned long status)
 {
     int ret;
 	
@@ -4867,6 +4980,32 @@ int epfront_stop_trans(unsigned long status)
 }
 
 /*****************************************************************************
+Function    : epfront_stop_trans
+Description : stop trans
+Input       : void
+Output      : int
+Return      : VOS_OK on success or error code on failure
+*****************************************************************************/
+int epfront_stop_trans(unsigned long status)
+{
+    int ret;
+
+	if(test_and_set_bit(EPFRONT_SCSI_RESETTING, &epfront_status)){
+		while(test_bit(EPFRONT_SCSI_RESETTING, &epfront_status)){
+			set_current_state(TASK_INTERRUPTIBLE);
+			(void)schedule_timeout((long)HZ/10);
+			set_current_state(TASK_RUNNING);
+		}
+	}
+	
+	ret = epfront_do_stop_trans(status);
+
+	clear_bit(EPFRONT_SCSI_RESETTING, &epfront_status);
+
+	return ret;
+}
+
+/*****************************************************************************
 Function    : epfront_start_trans
 Description : start trans
 Input       : void
@@ -4878,7 +5017,7 @@ void epfront_start_trans(void)
     clear_bit(EPFRONT_SCSI_LINKDOWN, &epfront_status);
     clear_bit(EPFRONT_SCSI_QUEUE_OFF, &epfront_status);
     set_bit(EPFRONT_SCSI_START, &epfront_status);
-
+    epfront_sv_set_empty(&g_sv_ctrl);
     if(waitqueue_active(&g_sv_ctrl.wait_queue))
         wake_up(&g_sv_ctrl.wait_queue);
 
@@ -4895,18 +5034,14 @@ Return      : VOS_OK on success or error code on failure
 static int epfront_scsi_back_insmod_probe(void){
 
 	int ret = 0;
-    static unsigned long reset_fail_int;
 
 	ret = epfront_sync_reset_epback();
 	if(ret){
-		if(printk_timed_ratelimit(&reset_fail_int, EPFRONT_PRI_RESET_BACK_INTERVAL_MSEC))
-			epfront_err("epfront_sync_reset_epback failed, ret[%d]", ret);
 		goto err_out;
 	}
 
 	ret = epfront_sync_back_config();
 	if(ret){
-		epfront_err("epfront_sync_back_config failed, ret[%d]", ret);
 		goto err_out;
 	}
 
@@ -4918,7 +5053,7 @@ static int epfront_scsi_back_insmod_probe(void){
 
 	ret = epfront_trans_way_init();
 	if(ret){
-		epfront_err("epfront_trans_way_inti failed,ret[%d],ret",ret);
+		epfront_err("epfront_trans_way_init failed,ret[%d],ret",ret);
 		goto err_out;
 	}
 
@@ -4939,12 +5074,9 @@ static int epfront_scsi_back_notify_probe(void){
 
 	int ret = 0;
 	int i;
-    static unsigned long notify_interval;
 
 	ret = epfront_quiry_epback_rdy();
 	if(ret){
-		if(printk_timed_ratelimit(&notify_interval, EPFRONT_PRI_BACK_RDY_INTERVAL_MSEC))
-			epfront_err("epfront_quiry_epback_rdy failed, ret[%d]", ret);
 		goto err_out;
 	}
 
@@ -5113,7 +5245,7 @@ static void epfront_lun_ctrl_exit(epfront_lun_controler_t* lun_ctrl)
     list_for_each_entry_safe(lun_lst, tmp, &lun_ctrl->async_list, list){
 		if(!IS_ERR_OR_NULL(lun_lst)){
 			list_del_init(&lun_lst->list);
-			kfree(lun_lst);
+			epfront_free_lun_list(lun_lst);
 		}
 	}
 	INIT_LIST_HEAD(&lun_ctrl->async_list);
@@ -5133,6 +5265,12 @@ static void epfront_lun_ctrl_exit(epfront_lun_controler_t* lun_ctrl)
 		kfree(lun_ctrl->table);
 	    lun_ctrl->table = NULL;
 	}
+
+	if(lun_ctrl->lun_bits){
+		kfree(lun_ctrl->lun_bits);
+		lun_ctrl->lun_bits = NULL;
+	}
+
 }
 
 /*****************************************************************************
@@ -5145,7 +5283,9 @@ Return      : VOS_OK on success or error code on failure
 *****************************************************************************/
 static int epfront_lun_ctrl_init(epfront_lun_controler_t* lun_ctrl, unsigned int size)
 {
-    if(!lun_ctrl || !size){
+	int ret;
+
+	if(!lun_ctrl || !size){
 		epfront_err("illegal para: size[%u]", size);
 		return -EINVAL;
 	}
@@ -5154,20 +5294,36 @@ static int epfront_lun_ctrl_init(epfront_lun_controler_t* lun_ctrl, unsigned int
 	INIT_LIST_HEAD(&lun_ctrl->async_list);
     INIT_LIST_HEAD(&lun_ctrl->async_devname_list);
 
+	lun_ctrl->size = size;
+    /*lint -e587*/
 	size = (int)roundup_pow_of_two(size);
 	if(size < 2){
 		lun_ctrl->mask = 0;
 		return -EINVAL;
 	}
-	
+    /*lint +e587*/
+
+    lun_ctrl->lun_bits = kzalloc( ((size + BITS_PER_LONG - 1) / BITS_PER_LONG)
+		* sizeof(unsigned long), GFP_KERNEL );
+	if(NULL == lun_ctrl->lun_bits){
+		epfront_err("alloc memory fo lun_bits failed, size[%u]", size);
+		return -ENOMEM;
+	}
+
 	lun_ctrl->table = kzalloc(size * sizeof(struct epfront_lun_list*), GFP_KERNEL);
 	if(NULL == lun_ctrl->table){
 		epfront_err("alloc lun_tbl failed, size[%lu]", size * sizeof(struct epfront_lun_list*));
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_free_bits;
 	}
 	lun_ctrl->mask = size - 1;
 
 	return 0;
+
+err_free_bits:
+	kfree(lun_ctrl->lun_bits);
+	lun_ctrl->lun_bits = NULL;
+	return ret;	
 }
 
 /*****************************************************************************
@@ -5179,11 +5335,15 @@ Return      : void
 *****************************************************************************/
 static void epfront_io_list_init(void)
 {
-	int index =0;
-   	for(index = 0; index < IO_LIST_N; index ++){
+	unsigned long index = 0;
+
+	for(index = 0; index < IO_LIST_N; index++){
 		spin_lock_init(&io_list_lock[index]);
 		INIT_LIST_HEAD(&io_list[index]);
-	}	
+		
+		tasklet_init(&io_tasklet[index], epfront_io_handle, index);
+	}
+
 	return;
 }
 
@@ -5227,9 +5387,7 @@ static int epfront_base_init(void)
 		goto err_out;
 	}
 
-	
-
-	ret = epfront_sv_ctrl_init(&g_sv_ctrl, "supervise_epfront");
+	ret = epfront_sv_ctrl_init(&g_sv_ctrl, "ep_supervise");
 	if(ret){
 		epfront_err("epfront_sv_ctrl_init failed, ret[%d]", ret);
 		goto lun_ctrl_exit;
@@ -5294,10 +5452,6 @@ static int __init epfront_init( void )
 	if(use_cluster)
             epfront_driver_template.use_clustering = ENABLE_CLUSTERING;
 	epfront_info("epfront_driver_template.use_clustering is %u", epfront_driver_template.use_clustering);
-	if (!cpu_has_xmm4_2){
-		epfront_err("cpu type error,cpu not support xmm4");
-        goto errout;
-	}	
 
 	set_bit(EPFRONT_SCSI_STOP, &epfront_status);
 	
@@ -5529,6 +5683,30 @@ static int epfront_aer_recv_linkdown(void* data)
 }
 
 /*****************************************************************************
+Function    : epfront_sv_reset_handle
+Description : sv thread reset handle
+Input       : void * data
+Output      : int
+Return      : VOS_OK on success or error code on failure
+*****************************************************************************/
+static int epfront_sv_reset_handle(void* data)
+{
+	int ret = 0;
+	unsigned long tmp_status = 0;
+
+	if(!test_and_set_bit(EPFRONT_SCSI_RESETTING, &epfront_status)){
+		set_bit(SDI_FRONT_UPDATE, &tmp_status);
+		smp_mb();
+		ret = epfront_do_stop_trans(tmp_status);
+		epfront_info("epfront_do_stop_trans ret[%d]", ret);
+		epfront_start_trans();
+		clear_bit(EPFRONT_SCSI_RESETTING, &epfront_status);
+	}
+	
+    return ret;
+}
+
+/*****************************************************************************
 Function    : epfront_sv_rename_luns
 Description : sv thread rename luns
 Input       : void * data
@@ -5702,19 +5880,16 @@ static int epfront_sv_start_trans(void* data)
 	
 	ret = epfront_dev_init();
 	if(ret){
-		epfront_err("epfront_dev_init failed, ret[%d]", ret);
 		goto wait_ready;
 	}
 
 	ret = epfront_scsi_back_insmod_probe();
 	if(ret){
-		//epfront_err("ep back is not ready, ret[%d]", ret);
 		goto wait_ready;
 	}
 
 	ret = epfront_scsi_back_notify_probe();
 	if(ret){
-		//epfront_err("epfront_scsi_back_notify_probe failed, ret[%d]", ret);
 		goto wait_notify;
 	}
 
@@ -5724,16 +5899,16 @@ static int epfront_sv_start_trans(void* data)
 	
 wait_ready:
 	if(!test_bit(EPFRONT_SCSI_FAILFAST, &epfront_status)){
-	    msleep(EPFRONT_TRANS_RESET_INTERVAL_TIME);
+		msleep(EPFRONT_TRANS_RESET_INTERVAL_TIME);
+		(void)epfront_sv_assign_task(&g_sv_ctrl, SV_TRANS_REINIT, epfront_sv_start_trans, NULL, 0);
 	}
-    (void)epfront_sv_assign_task(&g_sv_ctrl, SV_TRANS_REINIT, epfront_sv_start_trans, NULL, 0);
 	return ret;
 
 wait_notify:
 	if(!test_bit(EPFRONT_SCSI_FAILFAST, &epfront_status)){
-	    msleep(EPFRONT_TRANS_RESET_INTERVAL_TIME);
+		msleep(EPFRONT_TRANS_RESET_INTERVAL_TIME);
+		(void)epfront_sv_assign_task(&g_sv_ctrl, SV_TRANS_REINIT, epfront_sv_back_notify_probe, NULL, 0);
 	}
-    (void)epfront_sv_assign_task(&g_sv_ctrl, SV_TRANS_REINIT, epfront_sv_back_notify_probe, NULL, 0);
 
 	return ret;
 }

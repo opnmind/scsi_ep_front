@@ -3047,7 +3047,7 @@ static void transfer_sys_do_release(void)
 		epfront_err("dev disable failed");
 
 	gdev_list_remove();
-	udelay(3ul);
+	udelay(3uL);
 	admin_queue = sdev->admin_queue;
 	if (!admin_queue) {
 		epfront_info("admin queue is not exit");
@@ -3654,10 +3654,10 @@ Return      : int
 *****************************************************************************/
 static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
+    int probe_period_times = 0;
 	int result, pfno;
 	struct sdi_pdev_info *sdev = &gsdev;
-	int scsi_probe_try_times = 1;
-	unsigned long time_out = jiffies + PROBE_TIME_OUT * HZ;
+	
 	pfno = PCI_FUNC(pdev->devfn);
 	if ((pfno == 0) || (pfno == 2))
 		return 0;
@@ -3704,18 +3704,12 @@ static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	result = sdi_setup_pools(sdev);
 	if (result)
 		goto free_wq;
-	
-	do {
+try_again:	
 		result = sdi_dev_start(sdev);
 		if (result) {
-			if (time_after(jiffies,time_out)) {
-				epfront_err("dev start time out");
-				goto start_probe_sdiep_thd;
-			}
-			msleep(HEATBEAT_WAITTIME);
-			epfront_err("dev start err try times %d", ++scsi_probe_try_times);
+		    epfront_err("dev start time out");
+		    goto start_probe_sdiep_thd;
 		}
-	} while(result);
 
 #ifdef HEART_BEAT_CHECK
 	INIT_WORK(&sdev->service_task, sdi_service_task);
@@ -3740,6 +3734,17 @@ start_probe_sdiep_thd:
 	result = sdi_start_probeep_thd(sdev);
 	if(result == 0)
 		return 0;
+    else{
+		probe_period_times++;
+		if(probe_period_times < MAX_PROBE_TRY_TIME_WHEN_THREAD_FAIL)
+		{
+            epfront_err("create probe_thread fail times:%d",probe_period_times);
+			goto try_again;
+		}
+		else{
+			epfront_err("probe has up to max times,quiting");
+		}
+	}
 	sdi_release_pools(sdev);
 free_wq:
 	destroy_workqueue(sdev->aenwork);
@@ -3890,3 +3895,92 @@ void sdi_pf12_common_exit(void)
 	epfront_info("transfer module unloaded");
 }
 
+#define EPFRONT_DUMP_ENTRY_BEFORE 10
+#define EPFRONT_DUMP_ENTRY_AFTER 54
+
+void epfront_print_cq(int qid)
+{
+	sdi_pdev_info_t *spdev = &gsdev;
+	sdi_cq_info_t *cq_info = spdev->cq_info[qid&(SDI_PF12_MAX_CQ_NR-1)];
+	
+	unsigned char* data;
+	int ite_cqe, end_cqe;
+	int i;
+
+	if(likely(cq_info)){
+		if(likely(cq_info->cq_addr)){
+			ite_cqe = cq_info->head;
+			end_cqe = cq_info->head;
+			ite_cqe = (ite_cqe - EPFRONT_DUMP_ENTRY_BEFORE) >= 0 ?
+				(ite_cqe - EPFRONT_DUMP_ENTRY_BEFORE) : (ite_cqe + cq_info->q_depth - EPFRONT_DUMP_ENTRY_BEFORE);
+			end_cqe = (end_cqe + EPFRONT_DUMP_ENTRY_AFTER >= cq_info->q_depth) ?
+				(end_cqe + EPFRONT_DUMP_ENTRY_AFTER - cq_info->q_depth) : (end_cqe + EPFRONT_DUMP_ENTRY_AFTER);
+
+			while(ite_cqe != end_cqe){
+				data = (unsigned char*)cq_info->cq_addr + (long)ite_cqe * cq_info->stride;
+				for(i = 0; i < (cq_info->stride >> 4); ++i){
+					epfront_info("cq[%d] cqe[%d]:"
+						"%02x %02x %02x %02x    %02x %02x %02x %02x    %02x %02x %02x %02x    %02x %02x %02x %02x",
+						qid, ite_cqe,
+						data[(long)i*16],data[(long)i*16+1],data[(long)i*16+2],data[(long)i*16+3],
+						data[(long)i*16+4],data[(long)i*16+5],data[(long)i*16+6],data[(long)i*16+7],
+						data[(long)i*16+8],data[(long)i*16+9],data[(long)i*16+10],data[(long)i*16+11],
+						data[(long)i*16+12],data[(long)i*16+13],data[(long)i*16+14],data[(long)i*16+15]);
+				}
+				
+				if(++ite_cqe == cq_info->q_depth){
+					ite_cqe = 0;
+				}
+			}
+		}else{
+			epfront_info("qid[%d]: cq_info->cq_addr[0x%p]", qid, cq_info->cq_addr);
+		}
+	} else{
+		epfront_info("qid[%d]: cq_info[0x%p]", qid, cq_info);
+	}
+}
+
+void epfront_print_queue(int qid)
+{
+	sdi_pdev_info_t *spdev = &gsdev;
+	sdi_cq_info_t *cq_info = spdev->cq_info[qid&(SDI_PF12_MAX_CQ_NR-1)];
+	sdi_sq_info_t *sq_info = spdev->sq_info[qid&(SDI_PF12_MAX_CQ_NR-1)];
+
+	if(!cq_info || !sq_info){
+		epfront_info("qid[%d]: sq_info[0x%p], cq_info[0x%p]", qid, sq_info, cq_info);
+		return ;
+	}
+	
+	epfront_info("cq[%d]: head[%d], tail[%d], q_depth[%d], stride[%d], q_type[%d]\n"
+		"cq_addr[0x%p], dma_addr[0x%llx], cpu_no[%d], q_db[0x%p]\n"
+		"rx_ng_cnt[0x%llx], rx_ok_cnt[0x%llx], size[%u], cq_vector[%u], vecid[%u]\n"
+		"cqe_seen[%d], cq_phase[%d], suspend[%d]",
+		cq_info->cqid, cq_info->head, cq_info->tail, cq_info->q_depth, cq_info->stride, cq_info->q_type,
+		cq_info->cq_addr, cq_info->dma_addr, cq_info->cpu_no, cq_info->q_db,
+		cq_info->rx_ng_cnt, cq_info->rx_ok_cnt, cq_info->size, cq_info->cq_vector, cq_info->vecid,
+		cq_info->cqe_seen, cq_info->cq_phase, cq_info->suspend);
+
+	epfront_info("sq[%d]: head[%d], tail[%d], q_depth[%d], stride[%d], q_type[%d]\n"
+		"sq_addr[0x%p], dma_addr[0x%llx], q_db[0x%p], state[0x%lx]\n"
+		"rx_ng_cnt[0x%llx], rx_ok_cnt[0x%llx], size[%u]\n"
+		"cq_id[%u], udrv_type[%d], q_prio[%d]",
+		sq_info->sqid, sq_info->head, sq_info->tail, sq_info->q_depth, sq_info->stride, sq_info->q_type,
+		sq_info->sq_addr, sq_info->dma_addr, sq_info->q_db, sq_info->state,
+		sq_info->tx_ok_cnt, sq_info->tx_busy_cnt, sq_info->size,
+		sq_info->cq_id, sq_info->udrv_type, sq_info->q_prio);
+}
+
+void sdi_dump_queues(void)
+{
+    sdi_pdev_info_t *spdev = &gsdev;
+	sdi_cq_info_t *cq_info;
+	int i;
+
+	for(i = 0; i < SDI_PF12_MAX_CQ_NR; ++i){
+		cq_info = spdev->cq_info[i];
+		if(cq_info){
+			epfront_print_queue(i);
+			epfront_print_cq(i);
+		}
+	}
+}

@@ -58,7 +58,7 @@ struct sdi_pdev_info;
 #define PF12_BAR0_SIZE (8192)
 #define DOORBELL_OFFSET (4096)
 
-#define SDI_CARD_SHUTDOWN_TIMEOUT    (50*HZ)
+#define SDI_CARD_SHUTDOWN_TIMEOUT    (90*HZ)
 #define WAIT_SDI_CARD_SHUTDOWN_TIME    (3*HZ)
 #define SHUTDOWN_TIMEOUT    (5 * HZ)
 #define ADMIN_TIMEOUT (60 * HZ)
@@ -78,6 +78,7 @@ struct sdi_pdev_info;
 
 #define PROBE_TIME_OUT 	(60)
 
+#define MAX_PROBE_TRY_TIME_WHEN_THREAD_FAIL 10
 enum
 {
 	REQ_CMD_TIMEOUT,
@@ -225,12 +226,12 @@ struct sdi_cmd_info {
 
 
 struct sdi_completion {
-	__le32  result;     /* Used by admin commands to return data */
-	__u32   rsvd;
-	__le16  sq_head;    /* how much of this queue may be reclaimed */
-	__le16  sq_id;      /* submission queue that generated this entry */
-	__u16   command_id; /* of the command which completed */
-	__le16  status;     /* did the command fail, and if so, why? */
+	__le32  result;     /* sdi-- Used by admin commands to return data */
+	__u32   rsvd;       /* sdi-- */
+ 	__le16  sq_head;    /* sdi-- how much of this queue may be reclaimed */
+	__le16  sq_id;      /* sdi-- submission queue that generated this entry */
+	__u16   command_id; /* sdi-- of the command which completed */
+	__le16  status;     /* sdi-- did the command fail, and if so, why? */
 };
 
 
@@ -294,17 +295,17 @@ struct queue_info
 #define LINKDOWN_WAIT_TIME  (90000UL)
 
 struct pf12_bar {
-	__u64           cap;    /* Controller Capabilities */
-	__u32           vs;     /* Version */
-	__u32           intms;  /* Interrupt Mask Set */
-	__u32           intmc;  /* Interrupt Mask Clear */
-	__u32           cc;     /* Controller Configuration */
-	__u32           rsvd1;  /* Reserved */
-	__u32           csts;   /* Controller Status */
-	__u32           rsvd2;  /* Reserved */
-	__u32           aqa;    /* Admin Queue Attributes */
-	__u64           asq;    /* Admin SQ Base Address */
-	__u64           acq;    /* Admin CQ Base Address */
+	__u64           cap;    /* sdi-- Controller Capabilities */
+	__u32           vs;     /* sdi-- Version */
+	__u32           intms;  /* sdi-- Interrupt Mask Set */
+	__u32           intmc;  /* sdi-- Interrupt Mask Clear */
+	__u32           cc;     /* sdi-- Controller Configuration */
+	__u32           rsvd1;  /* sdi-- Reserved */
+	__u32           csts;   /* sdi-- Controller Status */
+	__u32           rsvd2;  /* sdi-- Reserved */
+	__u32           aqa;    /* sdi-- Admin Queue Attributes */
+	__u64           asq;    /* sdi-- Admin SQ Base Address */
+	__u64           acq;    /* sdi-- Admin CQ Base Address */
 };
 
 #define SDI_PF12_CAP_MQES(cap)      ((cap) & 0xffff)
@@ -405,30 +406,30 @@ enum {
 };
 
 struct sdi_features {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          nsid;
-	__u64           rsvd2[2];
-	__le64          prp1;
-	__le64          prp2;
-	__le32          fid;
-	__le32          dword11;
-	__u32           rsvd12[4];
+	__u8            opcode;         /* sdi-- */
+	__u8            flags;          /* sdi-- */
+	__u16           command_id;     /* sdi-- */
+	__le32          nsid;           /* sdi-- */
+	__u64           rsvd2[2];       /* sdi-- */
+	__le64          prp1;           /* sdi-- */
+	__le64          prp2;           /* sdi-- */
+	__le32          fid;            /* sdi-- */
+	__le32          dword11;        /* sdi-- */
+	__u32           rsvd12[4];      /* sdi-- */
 };
 
 struct sdi_create_cq {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          size;                   /*IO queue size*/
-	__u32           rsvd1[4];
-	__le64          prp1;
-	__u64           rsvd8;
-	__le16          cqid;
-	__le16          qsize;
-	__le16          cq_flags;
-	__le16          irq_vector;
+	__u8            opcode;         /* sdi-- */
+	__u8            flags;          /* sdi-- */
+	__u16           command_id;     /* sdi-- */
+	__le32          size;           /* sdi-- IO queue size*/
+	__u32           rsvd1[4];       /* sdi-- */
+	__le64          prp1;           /* sdi-- */
+	__u64           rsvd8;          /* sdi-- */
+	__le16          cqid;           /* sdi-- */
+	__le16          qsize;          /* sdi-- */
+	__le16          cq_flags;       /* sdi-- */
+	__le16          irq_vector;     /* sdi-- */
 	__le16          udrv_type;
 	__le16          cq_type;
 	__le16          stride;
@@ -437,55 +438,55 @@ struct sdi_create_cq {
 };
 
 struct sdi_create_sq {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          size;                   /*IO queue size*/
-	__u32           rsvd1[4];
-	__le64          prp1;
-	__u64           rsvd8;
-	__le16          sqid;
-	__le16          qsize;                  /*queue depth be compatible with current NVMe driver*/
-	__le16          sq_flags;
-	__le16          cqid;
-	__le16          udrv_type;
-	__le16          sq_type;
-	__le16          stride;
-	__u16           rsvd12;
-	__u32           rsvd13[2];
+	__u8            opcode;         /* sdi-- */
+	__u8            flags;          /* sdi-- */
+	__u16           command_id;     /* sdi-- */
+	__le32          size;           /* sdi-- IO queue size*/
+	__u32           rsvd1[4];       /* sdi-- */
+	__le64          prp1;           /* sdi-- */
+	__u64           rsvd8;          /* sdi-- */
+	__le16          sqid;           /* sdi-- */
+	__le16          qsize;          /* sdi-- queue depth be compatible with current NVMe driver*/
+	__le16          sq_flags;       /* sdi-- */
+	__le16          cqid;           /* sdi-- */
+	__le16          udrv_type;      /* sdi-- */
+	__le16          sq_type;        /* sdi-- */
+	__le16          stride;         /* sdi-- */
+	__u16           rsvd12;         /* sdi-- */
+	__u32           rsvd13[2];      /* sdi-- */
 };
 
 struct sdi_delete_queue {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__u32           rsvd1[9];
-	__le16          qid;
-	__u16           udrv_type;
-	__u32           rsvd11[5];
+	__u8            opcode;         /* sdi-- */
+	__u8            flags;          /* sdi-- */
+	__u16           command_id;     /* sdi-- */
+	__u32           rsvd1[9];       /* sdi-- */
+	__le16          qid;            /* sdi-- */
+	__u16           udrv_type;      /* sdi-- */
+	__u32           rsvd11[5];      /* sdi-- */
 };
 
 struct sdi_identify {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          nsid;
-	__u64           rsvd2[2];
-	__le64          prp1;
-	__le64          prp2;
-	__le32          cns;
-	__u32           rsvd11[5];
+	__u8            opcode;         /* sdi-- */
+	__u8            flags;          /* sdi-- */
+	__u16           command_id;     /* sdi-- */
+	__le32          nsid;           /* sdi-- */
+	__u64           rsvd2[2];       /* sdi-- */
+	__le64          prp1;           /* sdi-- */
+	__le64          prp2;           /* sdi-- */
+	__le32          cns;            /* sdi-- */
+	__u32           rsvd11[5];      /* sdi-- */
 };
 
 typedef struct data_uaen
 {
-	__u16 cmd;
-	__u16 flag;
-	__u32 rsvd;
-	__le32 xmit_len;
-	__le32 recv_len;
-	__le64 xfer_paddr;
-	__le64 recv_paddr;
+	__u16 cmd;                      /* sdi-- */
+	__u16 flag;                     /* sdi-- */
+	__u32 rsvd;                     /* sdi-- */
+	__le32 xmit_len;                /* sdi-- */
+	__le32 recv_len;                /* sdi-- */
+	__le64 xfer_paddr;              /* sdi-- */
+	__le64 recv_paddr;              /* sdi-- */
 }data_uaen;
 
 struct sdi_uspec_cmd {
@@ -502,49 +503,49 @@ struct sdi_uspec_cmd {
 };
 
 struct sdi_amdin_completion {
-	__le32  result;     /* Used by admin commands to return data */
+	__le32  result;     /* sdi-- Used by admin commands to return data */
 	__u32   rsvd;
-	__le16  sq_head;    /* how much of this queue may be reclaimed */
-	__le16  sq_id;      /* submission queue that generated this entry */
-	__u16   command_id; /* of the command which completed */
-	__le16  status;     /* did the command fail, and if so, why? */
+	__le16  sq_head;    /* sdi-- how much of this queue may be reclaimed */
+	__le16  sq_id;      /* sdi-- submission queue that generated this entry */
+	__u16   command_id; /* sdi-- of the command which completed */
+	__le16  status;     /* sdi-- did the command fail, and if so, why? */
 };
 
 struct sdi_rw_command {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          nsid;
-	__u64           rsvd2;
-	__le64          metadata;
-	__le64          prp1;
-	__le64          prp2;
-	__le64          slba;
-	__le16          length;
-	__le16          control;
-	__le32          dsmgmt;
-	__le32          reftag;
-	__le16          apptag;
-	__le16          appmask;
+	__u8            opcode;     /* sdi-- */
+	__u8            flags;      /* sdi-- */
+	__u16           command_id; /* sdi-- */
+	__le32          nsid;       /* sdi-- */
+	__u64           rsvd2;      /* sdi-- */
+	__le64          metadata;   /* sdi-- */
+	__le64          prp1;       /* sdi-- */
+	__le64          prp2;       /* sdi-- */
+	__le64          slba;       /* sdi-- */
+	__le16          length;     /* sdi-- */
+	__le16          control;    /* sdi-- */
+	__le32          dsmgmt;     /* sdi-- */
+	__le32          reftag;     /* sdi-- */
+	__le16          apptag;     /* sdi-- */
+	__le16          appmask;    /* sdi-- */
 };
 
 struct sdi_common_command {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          nsid;
-	__u32           cdw2[2];
-	__le64          metadata;
-	__le64          prp1;
-	__le64          prp2;
-	__u32           cdw10[6];
+	__u8            opcode;     /* sdi-- */
+	__u8            flags;      /* sdi-- */
+	__u16           command_id; /* sdi-- */
+	__le32          nsid;       /* sdi-- */
+	__u32           cdw2[2];    /* sdi-- */
+	__le64          metadata;   /* sdi-- */
+	__le64          prp1;       /* sdi-- */
+	__le64          prp2;       /* sdi-- */
+	__u32           cdw10[6];   /* sdi-- */
 };
 
 struct sdi_service_command {
-	__u8            opcode;
-	__u8            flags;
-	__u16           command_id;
-	__le32          rsvd[15];
+	__u8            opcode;     /* sdi-- */
+	__u8            flags;      /* sdi-- */
+	__u16           command_id; /* sdi-- */
+	__le32          rsvd[15];   /* sdi-- */
 };
 
 struct sdi_shutdown {
@@ -771,6 +772,7 @@ void sdi_pf12_common_exit(void);
 
 int transfer_sys_do_reset(void);
 
+void sdi_dump_queues(void);
 
 #endif
 

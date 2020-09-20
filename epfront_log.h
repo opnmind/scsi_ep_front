@@ -68,10 +68,4 @@ typedef enum
         if(epfront_loglevel >= EPFRONT_LOG_DEBUG) (void)printk(KERN_DEBUG PREFIX "[DEBUG][%s][%d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__);\
     } while (0)
 
-/*
-#define epfront_dbg_limit(fmt, ...) do{\
-		if(epfront_loglevel >= EPFRONT_LOG_DEBUG && printk_ratelimit()) (void)printk(KERN_DEBUG PREFIX "[DEBUG][%s][%d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__);\
-	} while (0)
-*/
-
 #endif

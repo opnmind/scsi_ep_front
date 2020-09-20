@@ -53,6 +53,7 @@ static inline int bsfifo_alloc(struct epfront_bs_fifo* fifo, int size, gfp_t gfp
 	 * round down to the next power of 2, since our 'let the indices
 	 * wrap' technique works only in this case.
 	 */
+    /*lint -e587*/
 	size = (int)roundup_pow_of_two((unsigned)( long long )size);
 
 	fifo->in = 0;
@@ -64,6 +65,7 @@ static inline int bsfifo_alloc(struct epfront_bs_fifo* fifo, int size, gfp_t gfp
 		fifo->mask = 0;
 		return -EINVAL;
 	}
+    /*lint +e587*/
 
 	fifo->data = kmalloc(size * 1, gfp_mask);
 

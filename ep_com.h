@@ -58,6 +58,9 @@ typedef enum {
 	EP_NOTIFY_SYNC_DISK_RESULT,
 	EP_NOTIFY_IS_BACK_RDY,
 	EP_NOTIFY_SYNC_DEVNAME,
+#ifdef EPBACK_PRIVATE
+	EP_NOTIFY_SYNC_SYSDISK,//获取系统盘信息
+#endif
 	EP_NOTIFY_MAX_LIMIT
 }ep_module_notify_op;
 
@@ -199,10 +202,13 @@ enum ep_gab_aer_type{
 };
 
 #define EP_SYNC_DISK_ONCE_N (512)
+//同步系统盘数量最大值1
+#define EP_SYNC_SYSDISK_ONCE_N (1)
 #define EP_SYNC_DEVNAME_ONCE_N (512)
 #define EP_MAX_UNIQUE_ID (512)
 #define EP_VOL_NAME_LEN (96)
 #define EP_DEV_NAME_LEN (128)
+#define EP_SYS_DISK (1)
 
 typedef struct ep_aer_disk{
 	u32 back_uniq_id;
