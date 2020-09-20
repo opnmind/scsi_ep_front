@@ -1671,7 +1671,7 @@ err_out:
 
 
 struct epfront_getdents{
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) )
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1798)) )
     struct dir_context ctx;
 #endif
     char disk_name[EP_DEV_NAME_LEN];
@@ -1721,7 +1721,7 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
     unsigned long timeout = jiffies + EPFRONT_GET_DEVNAME_TIME_OUT;
 
     struct epfront_getdents dents = {
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && ( RHEL_RELEASE_CODE >= 1798)))
         .ctx.actor = filldir_find,
 #endif
         .disk_name = "",
@@ -1742,8 +1742,8 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
 
         if (!IS_ERR_OR_NULL(filp)){
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)) \
-            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)) \
+            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1798)))
             ret = iterate_dir(filp, &dents.ctx);
 #else
             ret = vfs_readdir(filp, filldir_find, &dents);
