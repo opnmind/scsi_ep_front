@@ -1112,19 +1112,17 @@ static int alloc_cmdid(sdi_admin_queue_t *aq, void *ctx,
 {
     u16 depth = aq->q_depth - 1;
     int cmdid;
-    unsigned long flags;
     struct sdi_cmd_info *info = get_sdi_cmd_info(aq);
 
-    spin_lock_irqsave(&aq->q_lock, flags);
+    spin_lock(&aq->q_lock);
     do {
         cmdid = (int)find_first_zero_bit(aq->cmdid_data,(unsigned long)depth);
         if (cmdid >= depth) {
-            spin_unlock_irqrestore(&aq->q_lock, flags);
+            spin_unlock(&aq->q_lock);
             return -EBUSY;
         }
     } while (test_and_set_bit(cmdid, aq->cmdid_data));
-    spin_unlock_irqrestore(&aq->q_lock, flags);
-
+    spin_unlock(&aq->q_lock);
     info[cmdid].fn = handler;
     info[cmdid].ctx = ctx;
     info[cmdid].timeout = jiffies + timeout;
@@ -1224,11 +1222,9 @@ Return      : void
 *****************************************************************************/
 static void sdi_abort_command(sdi_admin_queue_t *aq, int cmdid)
 {
-    unsigned long flags;
-
-    spin_lock_irqsave(&aq->q_lock, flags);
+    spin_lock(&aq->q_lock);
     (void)cancel_cmdid(aq, cmdid, NULL);
-    spin_unlock_irqrestore(&aq->q_lock, flags);
+    spin_unlock(&aq->q_lock);
 }
 
 /*****************************************************************************
@@ -1271,11 +1267,10 @@ Return      : int
 *****************************************************************************/
 static int sdi_submit_cmd(sdi_admin_queue_t *aq, struct sdi_admin_command *cmd)
 {
-    unsigned long flags;
     u16 tail;
-    spin_lock_irqsave(&aq->q_lock, flags);
+    spin_lock(&aq->q_lock);
     if (aq->q_suspended) {
-        spin_unlock_irqrestore(&aq->q_lock, flags);
+        spin_unlock(&aq->q_lock);
         return -EBUSY;
     }
     tail = aq->sq_tail;
@@ -1284,8 +1279,7 @@ static int sdi_submit_cmd(sdi_admin_queue_t *aq, struct sdi_admin_command *cmd)
         tail = 0;
     writel(tail, aq->q_db);
     aq->sq_tail = tail;
-    spin_unlock_irqrestore(&aq->q_lock, flags);
-
+    spin_unlock(&aq->q_lock);
     return 0;
 }
 
@@ -1432,17 +1426,15 @@ Return      : irqreturn_t
 static irqreturn_t admin_irq(int irq, void *data)
 {
     irqreturn_t result;
-    unsigned long flags;
     sdi_admin_queue_t *aq = (sdi_admin_queue_t *)data;
 
     UNREFERENCE_PARAM(irq);
 
-    spin_lock_irqsave(&aq->q_lock, flags);
+    spin_lock(&aq->q_lock);
     (void)sdi_process_cq(aq);
     result = aq->cqe_seen ? IRQ_HANDLED : IRQ_NONE;
     aq->cqe_seen = 0;
-    spin_unlock_irqrestore(&aq->q_lock, flags);
-
+    spin_unlock(&aq->q_lock);
     return result;
 }
 
@@ -2033,24 +2025,22 @@ Return      : int
 *****************************************************************************/
 static int sdi_suspend_admin_queue(sdi_admin_queue_t *admin_queue)
 {
-    unsigned long flags;
     int vector = admin_queue->cq_vector;
 
-    spin_lock_irqsave(&admin_queue->q_lock, flags);
-    if (admin_queue->q_suspended) {
-        spin_unlock_irqrestore(&admin_queue->q_lock, flags);
+    spin_lock(&admin_queue->q_lock);
+    if (admin_queue->q_suspended) {        
+        spin_unlock(&admin_queue->q_lock);
         return 1;
     }
 
     admin_queue->q_suspended = 1;
-    spin_unlock_irqrestore(&admin_queue->q_lock, flags);
 
+    spin_unlock(&admin_queue->q_lock);
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 32) || defined(RHEL_RELEASE))
     (void)irq_set_affinity_hint(admin_queue->sdev->entry[vector].vector, NULL);
 #endif
 
     free_irq(admin_queue->sdev->entry[vector].vector, admin_queue);
-
     return 0;
 }
 
@@ -2063,12 +2053,10 @@ Return      : void
 *****************************************************************************/
 static void sdi_clear_admin_queue(sdi_admin_queue_t *admin_queue)
 {
-    unsigned long flags;
-
-    spin_lock_irqsave(&admin_queue->q_lock, flags);
+    spin_lock(&admin_queue->q_lock);
     (void)sdi_process_cq(admin_queue);
     sdi_admin_cancel_ios(admin_queue, (bool)false);
-    spin_unlock_irqrestore(&admin_queue->q_lock, flags);
+    spin_unlock(&admin_queue->q_lock);
 }
 
 
@@ -2272,7 +2260,6 @@ Return      : int
 *****************************************************************************/
 static int sdi_kthread(void *data)
 {
-    unsigned long flags;
     sdi_admin_queue_t *admin_queue;
     struct sdi_pdev_info *sdev = (struct sdi_pdev_info *)data;
 
@@ -2282,17 +2269,15 @@ static int sdi_kthread(void *data)
         spin_lock(&sdev->gdev_lock);
         admin_queue = sdev->admin_queue;
         if (admin_queue){
-            spin_lock_irqsave(&sdev->admin_queue->q_lock, flags);
+            spin_lock(&sdev->admin_queue->q_lock);
             (void)sdi_process_cq(sdev->admin_queue);
             sdi_admin_cancel_ios(sdev->admin_queue, (bool)true);
-            spin_unlock_irqrestore(&sdev->admin_queue->q_lock, flags);
+            spin_unlock(&sdev->admin_queue->q_lock);
         }
         spin_unlock(&sdev->gdev_lock);
-
         set_current_state(TASK_INTERRUPTIBLE);
         (void)schedule_timeout((signed long)round_jiffies_relative((unsigned long)HZ));
     }
-
     return 0;
 }
 
@@ -2614,9 +2599,7 @@ Return      : int
 static int _pcie_get_max_mps(struct pci_dev *dev)
 {
     u16 ctl;
-
     (void)pcie_capability_read_word(dev, PCI_EXP_DEVCAP, &ctl);
-
     return 128 << ((ctl & PCI_EXP_DEVCAP_PAYLOAD) >> 0);
 }
 
@@ -3597,6 +3580,7 @@ static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
     UNREFERENCE_PARAM(id);
 
+    sdev->use_threaded_interrupts = 1;
     epfront_info("Sdi card number: %d", pfcnt/PF_NUM_PER_PCIE_DEV);
 
     smain = epfront_get_main_info(pfcnt/PF_NUM_PER_PCIE_DEV);
@@ -3658,7 +3642,7 @@ static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     if (result){
         epfront_err("create_sdi_main_sys failed, result[%d]", result);
         //goto release_pool;
-	    goto free_entry;
+        goto free_entry;
     }
 
     smain->parent = epfront_kobj;

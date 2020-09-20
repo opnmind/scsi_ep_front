@@ -1344,10 +1344,16 @@ static int epfront_device_block(struct scsi_device *sdev)
      * block layer from calling the midlayer with this device's
      * request queue.
      */
+#if (((LINUX_VERSION_CODE == 266752) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 2049))) || \
+     ((LINUX_VERSION_CODE == KERNEL_VERSION(4, 18, 0)) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 2048))))
+    spin_lock_irqsave(&q->queue_lock, flags);
+    blk_mq_stop_hw_queues(q);
+    spin_unlock_irqrestore(&q->queue_lock, flags);
+#else    
     spin_lock_irqsave(q->queue_lock, flags);
     blk_stop_queue(q);
     spin_unlock_irqrestore(q->queue_lock, flags);
-    //scsi_wait_for_queuecommand(sdev);
+#endif
 
     (void)dev_printk(KERN_INFO, &sdev->sdev_gendev, "has stoped");
     return 0;
@@ -1377,9 +1383,16 @@ static int epfront_device_unblock(struct scsi_device *sdev,
         return err;
     }
 
+#if (((LINUX_VERSION_CODE == 266752) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 2049))) || \
+     ((LINUX_VERSION_CODE == KERNEL_VERSION(4, 18, 0)) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 2048))))
+    spin_lock_irqsave(&q->queue_lock, flags);
+    blk_mq_start_hw_queues(q);
+    spin_unlock_irqrestore(&q->queue_lock, flags);
+#else
     spin_lock_irqsave(q->queue_lock, flags);
     blk_start_queue(q);
     spin_unlock_irqrestore(q->queue_lock, flags);
+#endif
 
     (void)dev_printk(KERN_INFO, &sdev->sdev_gendev, "has start");
     return 0;
@@ -1671,7 +1684,9 @@ err_out:
 
 
 struct epfront_getdents{
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1798)) )
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 1797)) \
+    || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) \
+    || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1799 == RHEL_RELEASE_CODE)))
     struct dir_context ctx;
 #endif
     char disk_name[EP_DEV_NAME_LEN];
@@ -1721,7 +1736,9 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
     unsigned long timeout = jiffies + EPFRONT_GET_DEVNAME_TIME_OUT;
 
     struct epfront_getdents dents = {
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)) || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && ( RHEL_RELEASE_CODE >= 1798)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)) \
+        || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) \
+        || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1799 == RHEL_RELEASE_CODE)))
         .ctx.actor = filldir_find,
 #endif
         .disk_name = "",
@@ -1742,8 +1759,9 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
 
         if (!IS_ERR_OR_NULL(filp)){
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)) \
-            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= 1798)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 1797)) \
+            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) \
+            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1799 == RHEL_RELEASE_CODE)))
             ret = iterate_dir(filp, &dents.ctx);
 #else
             ret = vfs_readdir(filp, filldir_find, &dents);
