@@ -95,7 +95,6 @@ struct epfront_cmnd_list
 	__u32                             back_uniq_id;
 
     enum dma_data_direction           data_direction;
-    sdi_iod_t                         *iod;
 
     __u32                             scsi_cmnd_len;
     __u32                             sense_buffer_len;
@@ -109,7 +108,13 @@ struct epfront_cmnd_list
 //	wait_queue_head_t                 wait;
 
 	unsigned long submit;
-	unsigned long callback;	
+	unsigned long callback;
+};
+
+struct epfront_cmnd_node
+{
+    struct epfront_cmnd_list    cmnd;
+    struct cmnd_dma             dma_info;
 };
 
 struct epfront_host_ctrl{

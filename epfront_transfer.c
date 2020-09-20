@@ -241,42 +241,6 @@ sdi_pdev_info_t* ep_get_sdi_dev(void)
 }
 
 /*****************************************************************************
-Function    : iod_list
-Description : get iod list's pointer
-Input       : struct sdi_iod * iod
-Output      : void **
-Return      : void **
-*****************************************************************************/
-static void **iod_list(struct sdi_iod *iod)
-{
-	return (void **)((unsigned char *)iod + iod->offset);  /* converting to pointer array */
-}
-
-
-/*****************************************************************************
-Function    : get_dma_pool
-Description : get dma pool
-Input       : const sdi_pdev_info_t * spdev
-              struct sdi_iod * iod
-Output      : struct dma_pool *
-Return      : struct dma_pool *
-*****************************************************************************/
-static struct dma_pool *get_dma_pool(const sdi_pdev_info_t *spdev, struct sdi_iod *iod)
-{
-	struct dma_pool *pool;
-
-	if (iod->nents <= (SMALL_POOL_SIZE / sizeof(struct sdi_sgl_info))) {
-		pool = spdev->sgl_small_pool;
-		iod->npages = 0;
-	} else {
-		pool = spdev->sgl_page_pool;
-		iod->npages = 1;
-	}
-
-	return pool;
-}
-
-/*****************************************************************************
 Function    : sdi_setup_sgl
 Description : setup sgl
 Input       : struct sdi_iod * iod
@@ -285,55 +249,34 @@ Input       : struct sdi_iod * iod
 Output      : int
 Return      : int
 *****************************************************************************/
-int sdi_setup_sgl(struct sdi_iod *iod, u32 len, gfp_t gfp)
+int sdi_setup_sgl(struct cmnd_dma *dma_info, struct scatterlist *sg, int nents, u32 len)
 {
-	sdi_pdev_info_t *spdev = &gsdev;
-	struct dma_pool *pool;
 	u32 i;
-	int j, status;
+	int status;
 	unsigned int dma_len;
 	int length;
-	dma_addr_t sgs_dma, dma_addr, next_sgs_dma;
-	struct scatterlist *sg;
+    dma_addr_t dma_addr, sgs_dma;
 	struct sdi_sgl_info *sg_list;
 	const int last_sg = PAGE_SIZE / sizeof(struct sdi_sgl_info) - 1;
-	void **list;
 
-	if (!iod || !len) {
+	if (!dma_info || !sg || !nents || !len) {
 		epfront_err("Input parameter is invalid.");
 		return -EINVAL;
 	}
 
-	list = iod_list(iod);
-	sg = iod->sg;
+	sg_list = dma_info->sg_list;
+    sgs_dma = dma_info->first_dma_addr;
 
-	pool = get_dma_pool(spdev, iod);
-
-	sg_list = dma_pool_alloc(pool, gfp, &sgs_dma);
-	if (!sg_list) {
-		epfront_err("Allocate memory failed.");
-		iod->npages = -1;
-		return -ENOMEM;
-	}
-
-	list[0] = (void*)sg_list;
-	iod->first_dma = sgs_dma;
 	dma_addr = sg_dma_address(sg);
 	dma_len = sg_dma_len(sg);
 	length = (int)len;
 
 	i = 0;
 	for (;;) {
-		if (i == PAGE_SIZE / sizeof(struct sdi_sgl_info)) {
+		if (i > last_sg) {
 			struct sdi_sgl_info *old_sgl_list = sg_list;
-			sg_list = dma_pool_alloc(pool, gfp, &sgs_dma);
-			if (!sg_list) {
-				epfront_err("Allocate memory failed.");
-				status = -ENOMEM;
-				goto free_dma;
-			}
-
-			list[iod->npages++] = (void*)sg_list;
+			sg_list = (struct sdi_sgl_info *)((char *)sg_list + PAGE_SIZE);
+            sgs_dma += PAGE_SIZE;
 
 			sg_list[0].addr = old_sgl_list[i - 1].addr;
 			sg_list[0].id = old_sgl_list[i - 1].id;
@@ -357,14 +300,14 @@ int sdi_setup_sgl(struct sdi_iod *iod, u32 len, gfp_t gfp)
 		} else {
 			epfront_err("Parameter len is not equal iod's sgs total len.");
 			status = -EINVAL;
-			goto free_dma;
+			goto reset_dma;
 		}
 
 		sg = sg_next(sg);
 		if (unlikely(!sg)) {
 			epfront_err("Next SG is NULL.");
 			status = -EINVAL;
-			goto free_dma;
+			goto reset_dma;
 		}
 
 		dma_addr = sg_dma_address(sg);
@@ -374,99 +317,12 @@ int sdi_setup_sgl(struct sdi_iod *iod, u32 len, gfp_t gfp)
 
 	return 0;
 
-free_dma:
-	sgs_dma = iod->first_dma;
-	if (iod->npages == 0)
-		dma_pool_free(pool, list[0], sgs_dma);
-
-	for (j = 0; j < iod->npages; j++) {
-		sg_list = (struct sdi_sgl_info *)list[j];
-		next_sgs_dma = le64_to_cpu(sg_list[last_sg].addr);
-		dma_pool_free(pool, (void *)sg_list, sgs_dma);
-		sgs_dma = next_sgs_dma;
-	}
+reset_dma:
+    memset(dma_info->sg_list, 0, dma_info->length);
 
 	return status;
 }
 
-
-/*****************************************************************************
-Function    : sdi_free_iod
-Description : free iod
-Input       : struct sdi_iod * iod
-Output      : void
-Return      : void
-*****************************************************************************/
-void sdi_free_iod(struct sdi_iod *iod)
-{
-	const int last_sg = PAGE_SIZE / sizeof(struct sdi_sgl_info) - 1;
-	sdi_pdev_info_t *spdev = &gsdev;
-	int i;
-	dma_addr_t next_sgs_dma;
-	void **list;
-	dma_addr_t sgs_dma;
-
-	if (!iod) {
-		epfront_err("Input parameter is invalid.");
-		return;
-	}
-
-	list = iod_list(iod);
-	sgs_dma = iod->first_dma;
-
-	if (iod->npages == 0)
-		dma_pool_free(spdev->sgl_small_pool, list[0], sgs_dma);
-
-	for (i = 0; i < iod->npages; i++) {
-		struct sdi_sgl_info *sg_list = (struct sdi_sgl_info *)list[i];
-		next_sgs_dma = le64_to_cpu(sg_list[last_sg].addr);
-		dma_pool_free(spdev->sgl_page_pool, (void*)sg_list, sgs_dma);
-		sgs_dma = next_sgs_dma;
-	}
-
-	kfree(iod);
-}
-
-/*****************************************************************************
-Function    : sdi_npages
-Description : get sgl page numbers
-Input       : u32 nseg
-Output      : u32
-Return      : u32
-*****************************************************************************/
-//some case one more useless
-static u32 sdi_npages(u32 nseg)
-{
-	return DIV_ROUND_UP(sizeof(struct sdi_sgl_info) * nseg, (unsigned)PAGE_SIZE - sizeof(struct sdi_sgl_info)); // it's ok for small pool
-}
-
-/*****************************************************************************
-Function    : sdi_alloc_iod
-Description : alloc iod
-Input       : u32 nseg
-              u32 nbytes
-              gfp_t gfp
-Output      : struct sdi_iod *
-Return      : struct sdi_iod *
-*****************************************************************************/
-/***************************************************************************
- * |-----iod-----|---------sg--------|--- ptr for sgl list page addr  ---|
- * |  sdi_iod    |   sg[0] ... sg[n] |       page[0]  ...     page[n]    |
- ****************************************************************************/
-struct sdi_iod *sdi_alloc_iod(u32 nseg, u32 nbytes, gfp_t gfp)
-{
-	struct sdi_iod *iod = (struct sdi_iod *)kzalloc(sizeof(struct sdi_iod) +
-            sizeof(void *) * sdi_npages(nseg) + sizeof(struct scatterlist) * nseg, gfp);
-
-	if (iod) {
-		iod->offset = offsetof(struct sdi_iod, sg[nseg]);
-		iod->npages = -1;
-		iod->length = nbytes;
-		iod->nents = nseg;
-	}
-
-	return iod;
-}
 
 /*****************************************************************************
 Function    : sq_alloc
@@ -1671,51 +1527,6 @@ static void sdi_service_timer(unsigned long data)
 		schedule_work(&spdev->service_task);
 }
 #endif
-
-
-/*****************************************************************************
-Function    : sdi_release_pools
-Description : dma release pools
-Input       : struct sdi_pdev_info * sdev
-Output      : void
-Return      : void
-*****************************************************************************/
-static void sdi_release_pools(struct sdi_pdev_info *sdev)
-{
-	dma_pool_destroy(sdev->sgl_page_pool);
-	dma_pool_destroy(sdev->sgl_small_pool);
-}
-
-
-/*****************************************************************************
-Function    : sdi_setup_pools
-Description : setup tools
-Input       : struct sdi_pdev_info * sdev
-Output      : int
-Return      : int
-*****************************************************************************/
-static int sdi_setup_pools(struct sdi_pdev_info *sdev)
-{
-	struct device *dmadev = &sdev->pdev->dev;
-
-	sdev->sgl_page_pool = dma_pool_create("sgl list page", dmadev, (unsigned int)PAGE_SIZE,
-										  (unsigned int)PAGE_SIZE, 0);
-	if (!sdev->sgl_page_pool) {
-		epfront_err("Allocate memory failed!");
-		return -ENOMEM;
-	}
-
-	/* Optimisation for SGE number between 1 and 16 */
-	sdev->sgl_small_pool = dma_pool_create("sgl list 256", dmadev,
-										   SMALL_POOL_SIZE, SMALL_POOL_SIZE, 0);
-	if (!sdev->sgl_small_pool) {
-		epfront_err("Allocate memory failed!");
-		dma_pool_destroy(sdev->sgl_page_pool);
-		return -ENOMEM;
-	}
-
-	return 0;
-}
 
 
 /*****************************************************************************
@@ -3424,7 +3235,6 @@ static int sdiep_probe_kthread(void *data)
 	return 0;
 
 free_resource:
-	sdi_release_pools(sdev);
 	destroy_workqueue(sdev->aenwork);
 	kfree(sdev->entry);
 	sdev->entry = NULL;
@@ -3657,7 +3467,6 @@ static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
     int probe_period_times = 0;
 	int result, pfno;
 	struct sdi_pdev_info *sdev = &gsdev;
-	
 	pfno = PCI_FUNC(pdev->devfn);
 	if ((pfno == 0) || (pfno == 2))
 		return 0;
@@ -3701,15 +3510,12 @@ static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	pci_set_drvdata(pdev, sdev);
 
-	result = sdi_setup_pools(sdev);
-	if (result)
-		goto free_wq;
-try_again:	
-		result = sdi_dev_start(sdev);
-		if (result) {
-		    epfront_err("dev start time out");
-		    goto start_probe_sdiep_thd;
-		}
+try_again:
+	result = sdi_dev_start(sdev);
+	if (result) {
+		epfront_err("dev start time out");
+        goto start_probe_sdiep_thd;
+	}
 
 #ifdef HEART_BEAT_CHECK
 	INIT_WORK(&sdev->service_task, sdi_service_task);
@@ -3735,18 +3541,17 @@ start_probe_sdiep_thd:
 	if(result == 0)
 		return 0;
     else{
-		probe_period_times++;
-		if(probe_period_times < MAX_PROBE_TRY_TIME_WHEN_THREAD_FAIL)
-		{
+        probe_period_times++;
+        if(probe_period_times < MAX_PROBE_TRY_TIME_WHEN_THREAD_FAIL)
+        {
             epfront_err("create probe_thread fail times:%d",probe_period_times);
-			goto try_again;
-		}
-		else{
-			epfront_err("probe has up to max times,quiting");
-		}
-	}
-	sdi_release_pools(sdev);
-free_wq:
+            goto try_again;
+        }
+        else{
+            epfront_err("probe has up to max times,quiting");
+        }
+    }
+
 	destroy_workqueue(sdev->aenwork);
 free_entry:
 	kfree(sdev->entry);
@@ -3801,7 +3606,6 @@ static void sdi_pf12_remove(struct pci_dev *pdev)
 			sdi_dev_unmap(sdev);
 		epfront_info("device not ready");
 	}
-	sdi_release_pools(sdev);
 
 	pci_set_drvdata(pdev, NULL);
 

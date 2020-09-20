@@ -1206,11 +1206,7 @@ static void free_cmd_resource(struct epfront_cmnd_list* c)
 
     if(c->scsi_cmnd_paddr)
         dma_unmap_single(trans_device, c->scsi_cmnd_paddr, (size_t)c->scsi_cmnd_len, DMA_TO_DEVICE);
-    if(c->iod){
-        sdi_free_iod(c->iod);
-        c->iod = NULL;
-    }
-	
+
 	sc = c->scsi_cmd;
 	if(unlikely(!sc)){
 		epfront_err_limit("cmnd's scsi_cmnd is NULL");
@@ -2161,14 +2157,13 @@ static int epfront_io_send(struct epfront_cmnd_list* c)
     int ret = 0;
     struct ep_io_sqe io = {0};
     struct scsi_cmnd *sc = NULL;
-    struct sdi_iod *iod = NULL;
+    struct epfront_cmnd_node *cnode = NULL;
+    struct cmnd_dma *dma_info = NULL;
     struct scatterlist* scsi_sg = NULL;
-    struct scatterlist* iod_sg = NULL;
     struct scatterlist* ite_sg = NULL;
     dma_addr_t cmnd_mapping = 0;
     u32 cmnd_len = 0;
     u32 nents = 0;
-    int i = 0;
 	u32 crc32_sgl = 0, crc32_data = 0;
 	u32 c_cmd_index = 0, c_cmd_sn = 0;
     struct epfront_host_ctrl* h = c->h;
@@ -2177,6 +2172,8 @@ static int epfront_io_send(struct epfront_cmnd_list* c)
     BUG_ON(!trans_device);
 
     sc = c->scsi_cmd;
+    cnode = container_of(c, struct epfront_cmnd_node, cmnd);
+    dma_info = &(cnode->dma_info);
 
 #if (LINUX_VERSION_CODE == KERNEL_VERSION(2, 6, 18))
     cmnd_len = COMMAND_SIZE(sc->cmnd[0]));
@@ -2226,28 +2223,17 @@ static int epfront_io_send(struct epfront_cmnd_list* c)
 		    io.scsi_sg_ex_count = cpu_to_le64((dma_addr_t)sg_dma_len(ite_sg));
 		    OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_ON_SQ);
 	    } else{
-            iod = sdi_alloc_iod(num_map_sg, scsi_bufflen(sc), GFP_ATOMIC);
-            if(NULL == iod){
-                epfront_err("alloc_iod failed, no memory");
-                ret = -ENOMEM;
+            ret = sdi_setup_sgl(dma_info, scsi_sg, num_map_sg, scsi_bufflen(sc));
+            if(ret < 0){
                 goto unmap_sg;
             }
-            iod_sg = iod->sg;
-		    for_each_sg(scsi_sg, ite_sg, num_map_sg, i){
-		        memcpy(&iod_sg[i], ite_sg, sizeof(struct scatterlist));
-		    }
-		
-            ret = sdi_setup_sgl( iod, scsi_bufflen(sc), GFP_ATOMIC);
-            if(ret < 0){
-                goto unmap_free_iod;
-            }
 
-            io.scsi_sg_ex_paddr = cpu_to_le64(iod->first_dma);
+            io.scsi_sg_ex_paddr = cpu_to_le64(dma_info->first_dma_addr);
 		    io.scsi_sg_ex_count = cpu_to_le32(num_map_sg);
             OPCODE_SET_SGL_CTL(io.opcode, IO_SGL_EX);
 	    }
     }
-    c->iod = iod;
+
     c->data_direction = sc->sc_data_direction;
 
     //calc crc: sgl and data
@@ -2290,10 +2276,6 @@ del_list:
 	list_del_init(&c->list);
 	spin_unlock_irq(&h->lock);	
 
-unmap_free_iod:
-    if(iod){
-        sdi_free_iod(iod);
-    }
 unmap_sg:
 	if(nents){
         dma_unmap_sg(trans_device, scsi_sg, (int)nents, sc->sc_data_direction);
@@ -2996,6 +2978,7 @@ static void inline epfront_host_ctrl_destroy(struct epfront_host_ctrl *h)
 {
     int i = 0;
     struct epfront_cmnd_list *c;
+    struct epfront_cmnd_node *cnode;
 	
     if(unlikely(!h)){
         epfront_err("h is illegal, NULL");
@@ -3018,8 +3001,14 @@ static void inline epfront_host_ctrl_destroy(struct epfront_host_ctrl *h)
     if (h->cmd_pool_tbl){
         for (i = 0; i < (int)h->nr_cmds; i++){
             c = h->cmd_pool_tbl[i];
-            if (c){
-                kfree(c);
+            cnode = container_of(c, struct epfront_cmnd_node, cmnd);
+            if (c && cnode) {
+                if (cnode->dma_info.sg_list) {
+                    dma_free_coherent(trans_device, cnode->dma_info.length, cnode->dma_info.sg_list, cnode->dma_info.first_dma_addr);
+                    cnode->dma_info.sg_list = NULL;
+                }
+
+                kfree(cnode);
                 h->cmd_pool_tbl[i] = NULL;
             }
         }
@@ -3049,7 +3038,8 @@ Return      : VOS_OK on success or error code on failure
 static int inline epfront_host_ctrl_init(struct epfront_host_ctrl *h, struct Scsi_Host *sh, struct epfront_host_para* para)
 {
     int retval = 0;
-    struct epfront_cmnd_list *c;
+    struct epfront_cmnd_node *cnode;
+    size_t dma_len = 0;
     int i = 0;
 	
 	if(!trans_device){
@@ -3104,13 +3094,26 @@ static int inline epfront_host_ctrl_init(struct epfront_host_ctrl *h, struct Scs
         goto err_out;
     }
 
+    /*lint -e647*/
+    dma_len = DIV_ROUND_UP(para->sg_count * sizeof(struct sdi_sgl_info), PAGE_SIZE - sizeof(struct sdi_sgl_info)) * PAGE_SIZE;
+    /*lint +e647*/
     for (i = 0; i < (int)h->nr_cmds; i++){
-        c = kmalloc(sizeof(*c), GFP_KERNEL);
-        if (!c) {
+        cnode = kzalloc(sizeof(struct epfront_cmnd_node), GFP_KERNEL);
+        if (!cnode) {
             retval = -ENOMEM;
             goto err_out;
         }
-        h->cmd_pool_tbl[i] = c;
+
+        cnode->dma_info.length = dma_len;
+        cnode->dma_info.sg_list = dma_alloc_coherent(trans_device, dma_len, &(cnode->dma_info.first_dma_addr), GFP_KERNEL);
+        if (!cnode->dma_info.sg_list) {
+            epfront_err("alloc dma buffer for cmnd list failed");
+            kfree(cnode);
+            retval = -ENOMEM;
+            goto err_out;
+        }
+        
+        h->cmd_pool_tbl[i] = (struct epfront_cmnd_list *)((char *)cnode + offsetof(struct epfront_cmnd_node, cmnd));
     }
 	
     h->sense_queue_len = sizeof(struct scsi_sense_info) * h->nr_cmds;
@@ -4118,8 +4121,8 @@ static void ep_io_queue_callback(void * priv_data, void * cqe_data, u16  len, cq
 
 	io_lst = epfront_create_io_lst((struct ep_io_cqe*)cqe);
 	if(!io_lst){
+		epfront_warn("epfront_create_io_lst failed, handle the cqe in irq routine");
 		epfront_io_recv(cqe);
-		epfront_err("epfront_create_io_lst failed");
 		return ;
 	}
 
@@ -5017,7 +5020,7 @@ void epfront_start_trans(void)
     clear_bit(EPFRONT_SCSI_LINKDOWN, &epfront_status);
     clear_bit(EPFRONT_SCSI_QUEUE_OFF, &epfront_status);
     set_bit(EPFRONT_SCSI_START, &epfront_status);
-    epfront_sv_set_empty(&g_sv_ctrl);
+
     if(waitqueue_active(&g_sv_ctrl.wait_queue))
         wake_up(&g_sv_ctrl.wait_queue);
 

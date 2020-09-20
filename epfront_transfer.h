@@ -77,7 +77,6 @@ struct sdi_pdev_info;
 #define CQID_CHECK(cqid) (QID_CHECK (cqid))
 
 #define PROBE_TIME_OUT 	(60)
-
 #define MAX_PROBE_TRY_TIME_WHEN_THREAD_FAIL 10
 enum
 {
@@ -600,16 +599,12 @@ typedef enum
 }sdi_ll_event_t;
 
 
-typedef struct sdi_iod
+struct cmnd_dma
 {
-	int npages;    /* In the PRP list. 0 means small pool in use */
-	int offset;    /* Of sgl list */
-	u32 nents;     /* Used in scatterlist */
-	u32 length;    /* Of data, in bytes */
-	dma_addr_t first_dma;
-	struct scatterlist sg[0];
-} sdi_iod_t;
-
+    void*           sg_list;
+    dma_addr_t      first_dma_addr;
+    size_t          length;
+};
 
 typedef struct sdi_ep_base_info
 {
@@ -726,8 +721,6 @@ struct sdi_pdev_info
 	u8 __iomem *bar2;
 	struct pf12_bar __iomem *bar;
 	struct msix_entry *entry;
-	struct dma_pool *sgl_page_pool;
-	struct dma_pool *sgl_small_pool;
 	int queue_count;
 	int db_stride;
 	int max_depth;
@@ -762,7 +755,7 @@ int sdi_pf_linkdown(void);
 int linkdown_reinit(void);
 
 struct sdi_iod *sdi_alloc_iod(u32 nseg, u32 nbytes, gfp_t gfp);
-int sdi_setup_sgl(struct sdi_iod *iod, u32 len, gfp_t gfp);
+int sdi_setup_sgl(struct cmnd_dma *dma_info, struct scatterlist *sgl, int nents, u32 len);
 void sdi_free_iod(struct sdi_iod *iod);
 
 void ep_delete_queue(u16 qid);
