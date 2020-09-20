@@ -3,6 +3,14 @@
 This SCSI device driver exposes the SCSI (metadata.hw:passthrough=true) cinder volumes on Bare Metal (Ironic) servers in Open Telekom Cloud.
 The device driver supports specific Huawei SDI add-in cards (SD100EP - 19e5:1610).
 
+## Requirements
+
+- kernel-headers
+- kernel-devel
+- dos2unix
+- elfutils-libelf-devel
+- binutils
+
 ## Target of this clone repo
 
 - Reorganisation of the original repository https://github.com/SDI-Drivers/scsi_ep_front.
