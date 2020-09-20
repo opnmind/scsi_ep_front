@@ -1126,7 +1126,11 @@ static inline void epfront_scmd_printk(struct scsi_cmnd *sc)
             sc->serial_number, sc->retries, sc->allowed);
         */
         if(0 == print_lst_time || time_after(jiffies, print_lst_time + msecs_to_jiffies(EPFRONT_PRINT_RETRY_INTERVAL_MSEC))){
-            epfront_info("scsi_cmnd retrying: serial_number[%lu] retries[%d], allowed[%d], errRetryCnt[%lu]",sc->serial_number, sc->retries, sc->allowed,ioErrRetry_cnt);
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)))            
+            epfront_info("scsi_cmnd retrying: serial_number[%lu] retries[%d], allowed[%d], errRetryCnt[%lu]",sc->serial_number, sc->retries, sc->allowed,ioErrRetry_cnt);                        
+#else
+            epfront_info("scsi_cmnd retrying: retries[%d], allowed[%d], errRetryCnt[%lu]", sc->retries, sc->allowed,ioErrRetry_cnt);
+#endif
             print_lst_time = jiffies;
             ioErrRetry_cnt = 0;
             scsi_print_command(sc);
@@ -1345,7 +1349,8 @@ static int epfront_device_block(struct scsi_device *sdev)
      * request queue.
      */
 #if (((LINUX_VERSION_CODE == 266752) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 2049))) || \
-     ((LINUX_VERSION_CODE == KERNEL_VERSION(4, 18, 0)) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 2048))))
+     ((LINUX_VERSION_CODE == KERNEL_VERSION(4, 18, 0)) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 2048))) || \
+     (LINUX_VERSION_CODE >= 266752))
     spin_lock_irqsave(&q->queue_lock, flags);
     blk_mq_stop_hw_queues(q);
     spin_unlock_irqrestore(&q->queue_lock, flags);
@@ -1384,7 +1389,8 @@ static int epfront_device_unblock(struct scsi_device *sdev,
     }
 
 #if (((LINUX_VERSION_CODE == 266752) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 2049))) || \
-     ((LINUX_VERSION_CODE == KERNEL_VERSION(4, 18, 0)) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 2048))))
+     ((LINUX_VERSION_CODE == KERNEL_VERSION(4, 18, 0)) && ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 2048))) || \
+     (LINUX_VERSION_CODE >= 266752))
     spin_lock_irqsave(&q->queue_lock, flags);
     blk_mq_start_hw_queues(q);
     spin_unlock_irqrestore(&q->queue_lock, flags);
@@ -1684,16 +1690,14 @@ err_out:
 
 
 struct epfront_getdents{
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 1797)) \
-    || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) \
-    || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1799 == RHEL_RELEASE_CODE)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 1797)))
     struct dir_context ctx;
 #endif
     char disk_name[EP_DEV_NAME_LEN];
     int found;
 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0) || LINUX_VERSION_CODE==200740
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0))) || ((LINUX_VERSION_CODE<=200740))
 static int filldir_find(void * __buf, const char * name, int len,
             loff_t pos, u64 ino, unsigned int d_type)
 {
@@ -1736,9 +1740,7 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
     unsigned long timeout = jiffies + EPFRONT_GET_DEVNAME_TIME_OUT;
 
     struct epfront_getdents dents = {
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE == 1797)) \
-        || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) \
-        || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1799 == RHEL_RELEASE_CODE)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE))&&(RHEL_RELEASE_CODE >= 1797)))
         .ctx.actor = filldir_find,
 #endif
         .disk_name = "",
@@ -1759,20 +1761,12 @@ static int epfront_get_dev_name(struct epfront_lun_list* lun_lst, struct ep_aer_
 
         if (!IS_ERR_OR_NULL(filp)){
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE == 1797)) \
-            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1798 == RHEL_RELEASE_CODE)) \
-            || ((LINUX_VERSION_CODE == KERNEL_VERSION(3, 10, 0)) && defined(RHEL_RELEASE_CODE) && (1799 == RHEL_RELEASE_CODE)))
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || ((defined(RHEL_RELEASE_CODE)) && (RHEL_RELEASE_CODE >= 1797)))
             ret = iterate_dir(filp, &dents.ctx);
 #else
             ret = vfs_readdir(filp, filldir_find, &dents);
 #endif
-/*
-#if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 11, 0)) && (RHEL_RELEASE_CODE != 1797))
-            ret = vfs_readdir(filp, filldir_find, &dents);
-#else
-            ret = iterate_dir(filp, &dents.ctx);
-#endif
-*/
+
             if(dents.found){
                 ret = 0;
 
@@ -2607,7 +2601,9 @@ Return      : VOS_OK
 *****************************************************************************/
 static int epfront_slave_alloc(struct scsi_device *sdev)
 {
+#if (LINUX_VERSION_CODE <= KERNEL_VERSION(5, 0, 21))    
     set_bit(QUEUE_FLAG_BIDI, &sdev->request_queue->queue_flags);
+#endif
     return 0;
 }
 
@@ -3004,7 +3000,9 @@ static struct scsi_host_template epfront_driver_template =
     .queuecommand             = epfront_scsi_queue_command,
     .this_id                  = -1,
     .max_sectors              = 0xFFFF,
-    .use_clustering            = DISABLE_CLUSTERING,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0))
+    .use_clustering           = DISABLE_CLUSTERING,
+#endif
     .bios_param               = epfronth_bios_param,
     .eh_abort_handler         = epfront_eh_abort_handler,
     .eh_device_reset_handler  = epfront_eh_device_reset_handler,
@@ -4193,7 +4191,7 @@ static void epfront_adm_cmd_set_operation(struct work_struct* work)
             crc32 = CRC32_SEED;
             (void)epfront_crc32((smain->g_adm_cmd_set_ctrl).data_virt, recv_len, &crc32);
             if((smain->g_cqe).crc32 != crc32){
-                //Ôö¼ÓÍ³¼Æ¼ÆÊý?
+                //ï¿½ï¿½ï¿½ï¿½Í³ï¿½Æ¼ï¿½ï¿½ï¿½?
                 epfront_err("amd_cmd_set crc check failure,cqe_crc[%x],crc[%x]",(smain->g_cqe).crc32,crc32);
                 ret = EPFRONT_CMD_DATA_FROM_DEVICE_CRC_FAIL;
                 goto ADM_RESP_NO_CLOSE;
@@ -4201,7 +4199,7 @@ static void epfront_adm_cmd_set_operation(struct work_struct* work)
         }
     }
     /*epfront_dbg("----the message is %s",(char*)((smain->g_adm_cmd_set_ctrl).data_virt));*/
-    //¿ªÆô¶¨Ê±Æ÷,·ÀÖ¹ÃüÁîÒ»Ö±Ö´ÐÐ£¬½ø³ÌÎÞ·¨ÍË³ö£¬¹¤×÷¶ÓÁÐÎÞ·¨½áÊø
+    //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½,ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½ï¿½Ò»Ö±Ö´ï¿½Ð£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ·ï¿½ï¿½Ë³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ·ï¿½ï¿½ï¿½ï¿½ï¿½
     (smain->g_adm_cmd_timer).expires = jiffies + EPFRONT_ADM_CMD_EXEC_TIMEOUT;
     (smain->g_adm_cmd_timer).data = (unsigned long)(smain);
     add_timer(&(smain->g_adm_cmd_timer));
@@ -4231,17 +4229,17 @@ static void epfront_adm_cmd_set_operation(struct work_struct* work)
     }
 
     mutex_unlock(&(smain->adm_timer_inf.timer_exist_mutex));
-    //×Ó½ø³Ìµ÷ÓÃÖ´ÐÐÃüÁîµÄ·µ»ØÖµ(µÍ)
+    //ï¿½Ó½ï¿½ï¿½Ìµï¿½ï¿½ï¿½Ö´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä·ï¿½ï¿½ï¿½Öµ(ï¿½ï¿½)
     /*
       call_ret = ret&0x0ff;
       if(!call_ret){
           epfront_err("the admin_cmd[%s] exec failure,epfront_call_usermode_cmd ret[%d],call_ret[%d]",
                         (char*)((smain->g_adm_cmd_set_ctrl).data_virt),ret,call_ret);
-        //´íÎó´¦Àí£¬¸øºó¶Ë»Ø¸´£¬ÃüÁîÖ´ÐÐ´íÎó
+        //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë»Ø¸ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö´ï¿½Ð´ï¿½ï¿½ï¿½
       }
       cmd_ret = (ret>>8)&0x0ff;
       */
-    //´ò¿ªÎÄ¼þÒÆµ½Çý¶¯³õÊ¼»¯ÖÐ?????????´ýÓÅ»¯
+    //ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½Æµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½?????????ï¿½ï¿½ï¿½Å»ï¿½
     fp = filp_open(smain->ep_cmd_res_filename,O_RDONLY|O_CREAT,0640);
     if(IS_ERR(fp)){
         epfront_err("open file[%s] failure!",smain->ep_cmd_res_filename);
@@ -4252,7 +4250,7 @@ static void epfront_adm_cmd_set_operation(struct work_struct* work)
     read_len = epfront_kernel_read(fp,&pos,(char*)((smain->g_adm_cmd_set_ctrl).data_virt),ADM_CMD_SET_DATA_LEN-1);
     if(read_len < 0|| read_len > ADM_CMD_SET_DATA_LEN-1){
         epfront_err("read_len[%d] from file",read_len);
-        //¶ÁÈ¡³ö´í£¬²»´«ÊäÊý¾ÝÁË£¬Ö±½Ó»Ø¸´
+        //ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë£ï¿½Ö±ï¿½Ó»Ø¸ï¿½
         ret = EPFRONT_ADM_CMD_FILE_READ_ERR;
         goto ADM_RESP;
     }
@@ -4730,7 +4728,7 @@ static void epfront_adm_cdm_set_ctrl_free(struct epfront_main_info *smain)
 
     if(adm_ctrl->data_virt){
         if(adm_ctrl->data_phys && adm_ctrl->data_len){
-            //ÊÍ·ÅµÄ³¤¶ÈÊÇ·ñÕýÈ·???
+            //ï¿½Í·ÅµÄ³ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½È·???
             dma_free_coherent(smain->trans_device, adm_ctrl->data_len, adm_ctrl->data_virt, adm_ctrl->data_phys);
             adm_ctrl->data_virt = NULL;
             adm_ctrl->data_phys = 0;
@@ -4783,8 +4781,8 @@ static int epfront_adm_cmd_set_ctrl_alloc(struct epfront_main_info *smain)
         return -EINVAL;
     }
     //memset((void*)adm_cmd_set_ctrl, 0, sizeof(struct epfront_adm_cmd_set_ctrl));
-    adm_cmd_set_ctrl->ctrl_opt = AER_NEET_RESP;//ÐèÒª»ØÓ¦
-    adm_cmd_set_ctrl->data_len = ADM_CMD_SET_DATA_LEN; //ÔÝÊ±¶¨µÄÃüÁîµÄ×î´ó³¤¶ÈÎª128×Ö½Ú
+    adm_cmd_set_ctrl->ctrl_opt = AER_NEET_RESP;//ï¿½ï¿½Òªï¿½ï¿½Ó¦
+    adm_cmd_set_ctrl->data_len = ADM_CMD_SET_DATA_LEN; //ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ó³¤¶ï¿½Îª128ï¿½Ö½ï¿½
     adm_cmd_set_ctrl->crc32 = 0;
     virt =(void*)dma_alloc_coherent(smain->trans_device, ADM_CMD_SET_DATA_LEN, &phys, GFP_KERNEL);
     if(unlikely(NULL == virt)){
@@ -6070,9 +6068,11 @@ static int __init epfront_init( void )
 {
     int i, ret = 0;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0))
     if(use_cluster)
             epfront_driver_template.use_clustering = ENABLE_CLUSTERING;
     epfront_info("epfront_driver_template.use_clustering is %u", epfront_driver_template.use_clustering);
+#endif
 
     memset((void*)gsepmain, 0, SDI_MAX_NRS * sizeof(epfront_main_info_t));
 

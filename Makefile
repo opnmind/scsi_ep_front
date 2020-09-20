@@ -6,7 +6,12 @@ DRV_VER := $(shell [ -f $(obj)/buildversion ] && cat $(obj)/buildversion)
 EXTRA_CFLAGS += -DSDI_MULTI_CARD
 EXTRA_CFLAGS += -DDRV_VERSION='"$(DRV_VER)"'
 EXTRA_CFLAGS += -g
+EXTRA_CFLAGS += -D_GNU_SOURCE
+
+DRIVER_NAME := scsi_ep_front
+
 all:
-	make ARCH=x86_64 CROSS_COMPILE= -C $(KDIR) M=$(CUR) modules
+	make LC_ALL=C ARCH=x86_64 CROSS_COMPILE= -C $(KDIR) M=$(CUR) modules
 clean:
-	make ARCH=x86_64 CROSS_COMPILE= -C $(KDIR) M=$(CUR) clean
+	make LC_ALL=C ARCH=x86_64 CROSS_COMPILE= -C $(KDIR) M=$(CUR) clean
+

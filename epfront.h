@@ -23,7 +23,6 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *---------------------------------------------------------------------------*/
-
 #ifndef __EPFRONT_COMMON_H_
 #define __EPFRONT_COMMON_H_
 #include <linux/types.h>
@@ -114,9 +113,13 @@ static inline void print_data(char *data, unsigned int len)
 
 static inline unsigned long get_ns_time(void)
 {
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
+    return ktime_get();
+#elif
     struct timespec now;
     getnstimeofday(&now);
     return timespec_to_ns(&now);
+#endif
 }
 
 
