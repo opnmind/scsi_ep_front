@@ -48,6 +48,11 @@ int sdi_create_sq_sysfs(sdi_sq_info_t* sq_info, struct kobject* parent);
 void clean_sdi_pfx_sys(sdi_pdev_info_t *adapter);
 int create_sdi_pfx_sys(sdi_pdev_info_t *adapter, struct kobject *parent);
 
+#ifdef SDI_MULTI_CARD
+void clean_sdi_main_sys(struct epfront_main_info * smain);
+int create_sdi_main_sys(struct epfront_main_info * smain, struct kobject * parent);
+#endif
+
 int  epfront_sysfs_init(void);
 void epfront_sysfs_exit(void);
 

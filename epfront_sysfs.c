@@ -41,15 +41,15 @@ Output      : ssize_t
 Return      : ssize_t
 *****************************************************************************/
 static ssize_t kobj_attr_show(struct kobject *kobj, struct attribute *attr,
-			      char *buf)
+                  char *buf)
 {
-	struct kobj_attribute *kattr;
-	ssize_t ret = -EIO;
+    struct kobj_attribute *kattr;
+    ssize_t ret = -EIO;
 
-	kattr = container_of(attr, struct kobj_attribute, attr);
-	if (kattr->show)
-		ret = kattr->show(kobj, kattr, buf);
-	return ret;
+    kattr = container_of(attr, struct kobj_attribute, attr);
+    if (kattr->show)
+        ret = kattr->show(kobj, kattr, buf);
+    return ret;
 }
 
 /*****************************************************************************
@@ -63,20 +63,20 @@ Output      : ssize_t
 Return      : ssize_t
 *****************************************************************************/
 static ssize_t kobj_attr_store(struct kobject *kobj, struct attribute *attr,
-			       const char *buf, size_t count)
+                   const char *buf, size_t count)
 {
-	struct kobj_attribute *kattr;
-	ssize_t ret = -EIO;
+    struct kobj_attribute *kattr;
+    ssize_t ret = -EIO;
 
-	kattr = container_of(attr, struct kobj_attribute, attr);
-	if (kattr->store)
-		ret = kattr->store(kobj, kattr, buf, count);
-	return ret;
+    kattr = container_of(attr, struct kobj_attribute, attr);
+    if (kattr->store)
+        ret = kattr->store(kobj, kattr, buf, count);
+    return ret;
 }
 
 static struct sysfs_ops epfront_kobj_sysfs_ops = {
-	.show	= kobj_attr_show,
-	.store	= kobj_attr_store,
+    .show   = kobj_attr_show,
+    .store  = kobj_attr_store,
 };
 
 static struct kobj_type epfront_sysfs_ktype = {
@@ -95,7 +95,7 @@ Return      : ssize_t
 static ssize_t epfront_lun_profile_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
 {
     struct epfront_lun_list* lun_lst = container_of(kobj, struct epfront_lun_list, kobj);
-    
+
     return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
         "back_uniq_id  [%u],\t host_index  [%u]\n"
         "[%u:%u:%u:%u] %s\n",
@@ -118,9 +118,9 @@ static ssize_t epfront_lun_stat_show(struct kobject* kobj, struct kobj_attribute
     struct epfront_lun_list* lun_lst = container_of(kobj, struct epfront_lun_list, kobj);
 
     return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
-		"send_num [%u]\t recv_num [%u]\n"
-		"abort_num [%u]\t back_abort[%u]\n"
-		"crc_error [%u]\t crc_data_error [%u]\n",
+        "send_num [%u]\t recv_num [%u]\n"
+        "abort_num [%u]\t back_abort[%u]\n"
+        "crc_error [%u]\t crc_data_error [%u]\n",
         atomic_read(&lun_lst->send_num), atomic_read(&lun_lst->recv_num),
         atomic_read(&lun_lst->abort_num), atomic_read(&lun_lst->back_abort),
         atomic_read(&lun_lst->crc_error), atomic_read(&lun_lst->crc_data_error));
@@ -159,12 +159,12 @@ int epfront_create_lun_sysfs(struct epfront_lun_list* lun_lst, struct kobject* p
 {
     int ret = 0;
     struct kobject* kobj_ptr = NULL;
-    
+
     if(unlikely(!lun_lst || !parent)){
         epfront_err("illegal para");
         return -EINVAL;
     }
-	
+
     kobj_ptr = &lun_lst->kobj;
     ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "lun%u", lun_lst->back_uniq_id);
     if(ret){
@@ -187,7 +187,7 @@ int epfront_create_lun_sysfs(struct epfront_lun_list* lun_lst, struct kobject* p
     }
 
     return 0;
-    
+
 rm_lun_profile:
     sysfs_remove_file(kobj_ptr, &epfront_lun_stat_attr.attr);
 rm_lun_sysfs:
@@ -208,7 +208,7 @@ Return      : ssize_t
 static ssize_t epfront_host_stat_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
 {
     struct epfront_host_ctrl* ctrl_info = container_of(kobj, struct epfront_host_ctrl, kobj);
-    
+
     return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
         "cmd_sn         [%u],\t cmds_num          [%u]\n"
         "abort_succ     [%u],\t abort_fail        [%u]\n"
@@ -271,13 +271,13 @@ int epfront_create_host_sysfs(struct epfront_host_ctrl* h, struct kobject* paren
 {
     int ret = 0;
     struct kobject* kobj_ptr = NULL;
-    
+
     if(unlikely(!h||!parent))
     {
         epfront_err("illegal para");
         return -EINVAL;
     }
-	
+
     kobj_ptr = &h->kobj;
     ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "host%u", epfront_ctrl_get_host_no(h));
     if(ret)
@@ -302,7 +302,7 @@ int epfront_create_host_sysfs(struct epfront_host_ctrl* h, struct kobject* paren
     }
 
     return 0;
-    
+
 rm_hostinfo_outline:
     sysfs_remove_file(kobj_ptr, &epfront_host_outline_attr.attr);
 rm_hostinfo:
@@ -355,11 +355,12 @@ Return      : ssize_t
 *****************************************************************************/
 static ssize_t epfront_version_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
 {
-	return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN, "%s\n", DRV_VERSION);
+    return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN, "%s\n", DRV_VERSION);
 }
 
 static struct kobj_attribute epfront_version_attr = __ATTR(version, S_IRUGO, epfront_version_show, NULL);
 
+#ifndef SDI_MULTI_CARD
 /*****************************************************************************
 Function    : epfront_statistic_show
 Description : show statistic
@@ -426,12 +427,15 @@ static ssize_t epfront_resource_show(struct kobject* kobj, struct kobj_attribute
 }
 
 static struct kobj_attribute epfront_resource_attr = __ATTR(resource, S_IRUGO, epfront_resource_show, NULL);
+#endif
 
 static struct attribute* epfront_common_attrs[] = {
     &epfront_log_level_attr.attr,
-	&epfront_version_attr.attr,
-	&epfront_statistic_attr.attr,
+    &epfront_version_attr.attr,
+    #ifndef SDI_MULTI_CARD
+    &epfront_statistic_attr.attr,
 	&epfront_resource_attr.attr,
+	#endif
     NULL
 };
 
@@ -449,7 +453,7 @@ Return      : int
 int epfront_sysfs_init(void)
 {
     int ret = 0;
-    
+
     epfront_kobj = kobject_create_and_add("epfront", kernel_kobj);
     if(NULL == epfront_kobj)
     {
@@ -481,7 +485,7 @@ void epfront_sysfs_exit(void)
     sysfs_remove_group(epfront_kobj, &epfront_common_attrs_group);
     kobject_del(epfront_kobj);
     kobject_put(epfront_kobj);
-	epfront_kobj = NULL;
+    epfront_kobj = NULL;
 }
 
 
@@ -498,10 +502,10 @@ Return      : ssize_t
 static ssize_t sdi_cq_profile_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
 {
     sdi_cq_info_t* cq_info = container_of(kobj, sdi_cq_info_t, kobj);
-    
-	return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
-		"dma_addr[%Lx] cq_vector[%d] q_depth[%d] stride[%d] q_type[%d]\n",
-		cq_info->dma_addr, cq_info->cq_vector, cq_info->q_depth, cq_info->stride, cq_info->q_type);
+
+    return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "dma_addr[%Lx] cq_vector[%d] q_depth[%d] stride[%d] q_type[%d]\n",
+        cq_info->dma_addr, cq_info->cq_vector, cq_info->q_depth, cq_info->stride, cq_info->q_type);
 }
 
 /*****************************************************************************
@@ -517,9 +521,9 @@ static ssize_t sdi_cq_stat_show(struct kobject* kobj, struct kobj_attribute* att
 {
     sdi_cq_info_t* cq_info = container_of(kobj, sdi_cq_info_t, kobj);
 
-	return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
-		"rx_ok_cnt[%llu]\t rx_ng_cnt[%llu]\n",
-		cq_info->rx_ok_cnt, cq_info->rx_ng_cnt);
+    return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "rx_ok_cnt[%llu]\t rx_ng_cnt[%llu]\n",
+        cq_info->rx_ok_cnt, cq_info->rx_ng_cnt);
 }
 
 static struct kobj_attribute sdi_cq_profile_attr = __ATTR(profile, S_IRUGO, sdi_cq_profile_show, NULL);
@@ -554,12 +558,12 @@ int sdi_create_cq_sysfs(sdi_cq_info_t* cq_info, struct kobject* parent)
 {
     int ret = 0;
     struct kobject* kobj_ptr = NULL;
-    
+
     if(unlikely(!cq_info || !parent)){
         epfront_err("illegal para");
         return -EINVAL;
     }
-	
+
     kobj_ptr = &cq_info->kobj;
     ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "cq%u", cq_info->cqid);
     if(ret){
@@ -581,7 +585,7 @@ int sdi_create_cq_sysfs(sdi_cq_info_t* cq_info, struct kobject* parent)
     }
 
     return 0;
-    
+
 rm_cq_profile:
     sysfs_remove_file(kobj_ptr, &sdi_cq_stat_attr.attr);
 rm_cq_sysfs:
@@ -604,20 +608,20 @@ static ssize_t sdi_sq_profile_show(struct kobject* kobj, struct kobj_attribute* 
     int count = 0;
     u16 head, tail, depth;
     sdi_sq_info_t* sq_info = container_of(kobj, sdi_sq_info_t, kobj);
-	
-	head = sq_info->head;
-	tail = sq_info->tail;
-	depth = sq_info->q_depth;
 
-	count += snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
-		"cq_id[%d] dma_addr[%Lx] q_depth[%d] stride[%d] q_type[%d]\n",
-		sq_info->cq_id, sq_info->dma_addr, sq_info->q_depth, sq_info->stride, sq_info->q_type);
-	
+    head = sq_info->head;
+    tail = sq_info->tail;
+    depth = sq_info->q_depth;
+
+    count += snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "cq_id[%d] dma_addr[%Lx] q_depth[%d] stride[%d] q_type[%d]\n",
+        sq_info->cq_id, sq_info->dma_addr, sq_info->q_depth, sq_info->stride, sq_info->q_type);
+
     count += snprintf(buf + count, EPFRONT_SYSFS_INFO_MAX_LEN,
-		"head[%d]\t tail[%d]\t free[%d]\t used[%d]\n",
-		head, tail, Q_USED(head, tail, depth), Q_FREE(head, tail, depth));
+        "head[%d]\t tail[%d]\t free[%d]\t used[%d]\n",
+        head, tail, Q_USED(head, tail, depth), Q_FREE(head, tail, depth));
 
-	return count;
+    return count;
 }
 
 /*****************************************************************************
@@ -632,10 +636,10 @@ Return      : ssize_t
 static ssize_t sdi_sq_stat_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
 {
     sdi_sq_info_t* sq_info = container_of(kobj, sdi_sq_info_t, kobj);
-	
-	return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
-		"tx_ok_cnt[%llu]\t tx_busy_cnt[%llu]\n",
-		sq_info->tx_ok_cnt, sq_info->tx_busy_cnt);
+
+    return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "tx_ok_cnt[%llu]\t tx_busy_cnt[%llu]\n",
+        sq_info->tx_ok_cnt, sq_info->tx_busy_cnt);
 }
 
 static struct kobj_attribute sdi_sq_profile_attr = __ATTR(profile, S_IRUGO, sdi_sq_profile_show, NULL);
@@ -670,12 +674,12 @@ int sdi_create_sq_sysfs(sdi_sq_info_t* sq_info, struct kobject* parent)
 {
     int ret = 0;
     struct kobject* kobj_ptr = NULL;
-    
+
     if(unlikely(!sq_info || !parent)){
         epfront_err("illegal para");
         return -EINVAL;
     }
-	
+
     kobj_ptr = &sq_info->kobj;
     ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "sq%u", sq_info->sqid);
     if(ret){
@@ -697,7 +701,7 @@ int sdi_create_sq_sysfs(sdi_sq_info_t* sq_info, struct kobject* parent)
     }
 
     return 0;
-    
+
 rm_sq_profile:
     sysfs_remove_file(kobj_ptr, &sdi_sq_stat_attr.attr);
 rm_sq_sysfs:
@@ -721,7 +725,7 @@ static ssize_t sdi_queue_group_show(struct kobject* kobj, struct kobj_attribute*
 #define GROUP_ID_MAX_LEN 32
     sdi_pdev_info_t* info = container_of(kobj, sdi_pdev_info_t, kobj);
 
-	return snprintf(buf, GROUP_ID_MAX_LEN, "group id: %d\n", info->cur_queue_group);
+    return snprintf(buf, GROUP_ID_MAX_LEN, "group id: %d\n", info->cur_queue_group);
 #undef GROUP_ID_MAX_LEN
 }
 
@@ -776,10 +780,18 @@ int create_sdi_pfx_sys(sdi_pdev_info_t *adapter, struct kobject *parent)
     int ret;
     struct kobject *kobj_ptr = &adapter->kobj;
 
+    #ifdef SDI_MULTI_CARD
+    ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "sdi_pf%02x", adapter->pdev->bus->number);
+    #else
     ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "sdi_pf1");
+    #endif
     if (ret)
     {
+        #ifdef SDI_MULTI_CARD
+        epfront_err("Create SDI PF[%02x] sys failed, ret[%d]", adapter->pdev->bus->number, ret);
+        #else
         epfront_err("Create SDI PF[1] sys failed, ret[%d]", ret);
+        #endif
         kobject_put(kobj_ptr);
         return ret;
     }
@@ -789,7 +801,11 @@ int create_sdi_pfx_sys(sdi_pdev_info_t *adapter, struct kobject *parent)
     {
         kobject_del(kobj_ptr);
         kobject_put(kobj_ptr);
+        #ifdef SDI_MULTI_CARD
+        epfront_err("create SDI PF[%02x] sys group attrs failed, ret[%d]", adapter->pdev->bus->number, ret);
+        #else
         epfront_err("create SDI PF[1] sys group attrs failed, ret[%d]", ret);
+        #endif
         return ret;
     }
 
@@ -806,9 +822,150 @@ Return      : void
 void clean_sdi_pfx_sys(sdi_pdev_info_t *adapter)
 {
     struct kobject *kobj_ptr = &adapter->kobj;
-	
+
     sysfs_remove_group(kobj_ptr, &sdi_pf1_attrs_group);
     kobject_del(kobj_ptr);
     kobject_put(kobj_ptr);
 }
+
+#ifdef SDI_MULTI_CARD
+/*****************************************************************************
+Function    : epfront_statistic_show
+Description : show statistic
+Input       : struct kobject * kobj
+              struct kobj_attribute * attr
+              char * buf
+Output      : ssize_t
+Return      : ssize_t
+*****************************************************************************/
+static ssize_t epfront_statistic_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
+{
+    int count = 0;
+    int i = 0;
+    struct epfront_main_info *spmain = container_of(kobj, struct epfront_main_info, kobj);
+
+    count += snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "ill_sqtype : %u, ill_sqpara: %u\n"
+        "ill_aer_type : %u, ill_aer_cqe: %u\n"
+        "ill_sqtype : %u\n"
+        "crc_err_notify: %u, crc_err_aen: %u\n",
+        atomic_read(&(spmain->stats.ill_sqtype)), atomic_read(&(spmain->stats.ill_sqpara)),
+        atomic_read(&(spmain->stats.ill_aer_type)), atomic_read(&(spmain->stats.ill_aer_cqe)),
+        atomic_read(&(spmain->stats.ill_io_cqe)),
+        atomic_read(&(spmain->stats.crc_err_notify)), atomic_read(&(spmain->stats.crc_err_aen)));
+
+#ifdef EPFRONT_DEBUG
+    count += snprintf(buf+count, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "cur_run_type: %d, cur_run_subtype: %d\n",
+        spmain->stats.cur_type, spmain->stats.cur_subtype);
+
+    count += snprintf(buf+count, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "sv_type:  todo\t done\n");
+    for(i = 0; i < SV_MAX_LIMIT; ++i){
+        count += snprintf(buf+count, EPFRONT_SYSFS_INFO_MAX_LEN,
+            "%d :\t   %u\t %u\n",
+            i, atomic_read(&(spmain->stats.sv_todo[i])), atomic_read(&(spmain->stats.sv_done[i])));
+    }
+
+    count += snprintf(buf+count, EPFRONT_SYSFS_INFO_MAX_LEN,
+        "aer_type: send\t todo\t done\n");
+    for(i = 0; i < AER_MAX_LIMIT; ++i){
+        count += snprintf(buf+count, EPFRONT_SYSFS_INFO_MAX_LEN,
+            "%d :\t  %u\t %u\t %u\n",
+            i, atomic_read(&(spmain->stats.aer_send[i])), atomic_read(&(spmain->stats.aer_todo[i])), atomic_read(&(spmain->stats.aer_done[i])));
+    }
+#endif
+
+    return count;
+}
+
+static struct kobj_attribute epfront_statistic_attr = __ATTR(statistic, S_IRUGO, epfront_statistic_show, NULL);
+
+/*****************************************************************************
+Function    : epfront_resource_show
+Description : show epfront resource
+Input       : struct kobject * kobj
+              struct kobj_attribute * attr
+              char * buf
+Output      : ssize_t
+Return      : ssize_t
+*****************************************************************************/
+static ssize_t epfront_resource_show(struct kobject* kobj, struct kobj_attribute* attr, char* buf)
+{
+    struct epfront_main_info *spmain = container_of(kobj, struct epfront_main_info, kobj);
+
+    return snprintf(buf, EPFRONT_SYSFS_INFO_MAX_LEN, "0x%lx\n", spmain->epfront_status);
+}
+
+static struct kobj_attribute epfront_resource_attr = __ATTR(resource, S_IRUGO, epfront_resource_show, NULL);
+
+/*****************************************************************************
+Function    : create_sdi_main_sys
+Description : create main sysfs
+Input       : struct epfront_main_info *smain
+Input       : struct kobject *parent
+Output      : void
+Return      : void
+*****************************************************************************/
+int create_sdi_main_sys(struct epfront_main_info *smain, struct kobject *parent)
+{
+    int ret;
+    struct kobject *kobj_ptr = &(smain->kobj);
+
+    ret = kobject_init_and_add(kobj_ptr, &epfront_sysfs_ktype, parent, "sdi_main%02x", smain->sdev->pdev->bus->number);
+    if (ret)
+    {
+        epfront_err("Create SDI MAIN[%02x] sys failed, ret[%d]", smain->sdev->pdev->bus->number, ret);
+        kobject_put(kobj_ptr);
+        return ret;
+    }
+
+    ret = sysfs_create_file(kobj_ptr, &epfront_statistic_attr.attr);
+    if(ret){
+        epfront_err("create sysfs epfront_statistic_attr failed");
+        goto rm_sysfs;
+    }
+
+    ret = sysfs_create_file(kobj_ptr, &epfront_resource_attr.attr);
+    if(ret){
+        epfront_err("create sysfs epfront_resource_attr failed");
+        goto rm_statistic_sysfs;
+    }
+
+    return 0;
+
+rm_statistic_sysfs:
+    sysfs_remove_file(kobj_ptr, &epfront_statistic_attr.attr);
+rm_sysfs:
+    kobject_del(kobj_ptr);
+    kobject_put(kobj_ptr);
+    return ret;
+}
+
+/*****************************************************************************
+Function    : clean_sdi_pfx_sys
+Description : clean main sysfs
+Input       : struct epfront_main_info *smain
+Output      : void
+Return      : void
+*****************************************************************************/
+void clean_sdi_main_sys(struct epfront_main_info *smain)
+{
+    struct kobject *kobj_ptr = NULL;
+
+    if (unlikely(!smain)){
+        epfront_err("smain is NULL");
+        return;
+    }
+
+    kobj_ptr = &(smain->kobj);
+
+    sysfs_remove_file(kobj_ptr, &epfront_statistic_attr.attr);
+    sysfs_remove_file(kobj_ptr, &epfront_resource_attr.attr);
+    kobject_del(kobj_ptr);
+    kobject_put(kobj_ptr);
+}
+#endif
+
+
 /*************************************pfx sys end**************************************************/

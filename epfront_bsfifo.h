@@ -30,16 +30,16 @@
 #include <linux/spinlock.h>
 
 struct epfront_bs_fifo{
-	unsigned int	in;
-	unsigned int	out;
-	unsigned int	mask;
-	unsigned int    recsize;
-	void		*data;
+    unsigned int    in;
+    unsigned int    out;
+    unsigned int    mask;
+    unsigned int    recsize;
+    void            *data;
 };
 
 static inline void bsfifo_reset_out(struct epfront_bs_fifo* fifo)
 {
-	fifo->out = fifo->in;
+    fifo->out = fifo->in;
 }
 
 static inline bool bsfifo_is_empty(struct epfront_bs_fifo* fifo)
@@ -49,162 +49,162 @@ static inline bool bsfifo_is_empty(struct epfront_bs_fifo* fifo)
 
 static inline int bsfifo_alloc(struct epfront_bs_fifo* fifo, int size, gfp_t gfp_mask)
 {
-	/*
-	 * round down to the next power of 2, since our 'let the indices
-	 * wrap' technique works only in this case.
-	 */
+    /*
+     * round down to the next power of 2, since our 'let the indices
+     * wrap' technique works only in this case.
+     */
     /*lint -e587*/
-	size = (int)roundup_pow_of_two((unsigned)( long long )size);
+    size = (int)roundup_pow_of_two((unsigned)( long long )size);
 
-	fifo->in = 0;
-	fifo->out = 0;
-	fifo->recsize = 1;
+    fifo->in = 0;
+    fifo->out = 0;
+    fifo->recsize = 1;
 
-	if (size < 2) {
-		fifo->data = NULL;
-		fifo->mask = 0;
-		return -EINVAL;
-	}
+    if (size < 2) {
+        fifo->data = NULL;
+        fifo->mask = 0;
+        return -EINVAL;
+    }
     /*lint +e587*/
 
-	fifo->data = kmalloc(size * 1, gfp_mask);
+    fifo->data = kmalloc(size * 1, gfp_mask);
 
-	if (!fifo->data) {
-		fifo->mask = 0;
-		return -ENOMEM;
-	}
-	fifo->mask = size - 1;
+    if (!fifo->data) {
+        fifo->mask = 0;
+        return -ENOMEM;
+    }
+    fifo->mask = size - 1;
 
-	return 0;
+    return 0;
 }
 
 static inline void bsfifo_free(struct epfront_bs_fifo* fifo)
 {
-	kfree(fifo->data);
-	fifo->in = 0;
-	fifo->out = 0;
-	fifo->recsize = 0;
-	fifo->data = NULL;
-	fifo->mask = 0;
+    kfree(fifo->data);
+    fifo->in = 0;
+    fifo->out = 0;
+    fifo->recsize = 0;
+    fifo->data = NULL;
+    fifo->mask = 0;
 }
 
 static inline void bsfifo_poke_n(struct epfront_bs_fifo *fifo, unsigned int n, unsigned int recsize)
 {
-	unsigned int mask = fifo->mask;
-	unsigned char *data = fifo->data;
+    unsigned int mask = fifo->mask;
+    unsigned char *data = fifo->data;
 
-	(data)[(fifo->in) & (mask)] = (unsigned char)(n);
+    (data)[(fifo->in) & (mask)] = (unsigned char)(n);
 
-	if (recsize > 1)
-		(data)[(fifo->in + 1) & (mask)] = (unsigned char)(n >> 8);
+    if (recsize > 1)
+        (data)[(fifo->in + 1) & (mask)] = (unsigned char)(n >> 8);
 }
 
 static inline void bsfifo_copy_in(struct epfront_bs_fifo *fifo, const void *src,
-		unsigned int len, unsigned int off)
+        unsigned int len, unsigned int off)
 {
-	unsigned int size = fifo->mask + 1;
-	unsigned int l;
+    unsigned int size = fifo->mask + 1;
+    unsigned int l;
 
-	off &= fifo->mask;
+    off &= fifo->mask;
 
-	l = min(len, size - off);
-	memcpy((unsigned char*)fifo->data + off, (unsigned char*)src, l);
-	memcpy((unsigned char*)fifo->data, (unsigned char*)src + l, len - l);
-	/*
-	 * make sure that the data in the fifo is up to date before
-	 * incrementing the fifo->in index counter
-	 */
-	smp_wmb();
+    l = min(len, size - off);
+    memcpy((unsigned char*)fifo->data + off, (unsigned char*)src, l);
+    memcpy((unsigned char*)fifo->data, (unsigned char*)src + l, len - l);
+    /*
+     * make sure that the data in the fifo is up to date before
+     * incrementing the fifo->in index counter
+     */
+    smp_wmb();
 }
 
 static inline unsigned int bsfifo_in(struct epfront_bs_fifo* fifo, void* buf, unsigned int len)
 {
-	if ( (len + fifo->recsize) >
-		((fifo->mask + 1) - (fifo->in - fifo->out)) )
-		return 0;
+    if ( (len + fifo->recsize) >
+        ((fifo->mask + 1) - (fifo->in - fifo->out)) )
+        return 0;
 
-	bsfifo_poke_n(fifo, len, fifo->recsize);
+    bsfifo_poke_n(fifo, len, fifo->recsize);
 
-	bsfifo_copy_in(fifo, buf, len, fifo->in + fifo->recsize);
-	fifo->in += len + fifo->recsize;
-	return len;
+    bsfifo_copy_in(fifo, buf, len, fifo->in + fifo->recsize);
+    fifo->in += len + fifo->recsize;
+    return len;
 }
 
 static inline unsigned int bsfifo_in_spinlocked(struct epfront_bs_fifo* fifo, void* buf, unsigned int len, spinlock_t* lock)
 {
-	unsigned long flags;
-	unsigned int ret;
-	spin_lock_irqsave(lock, flags);
-	ret = bsfifo_in(fifo, buf, len);
-	spin_unlock_irqrestore(lock, flags);
-	return ret;
+    unsigned long flags;
+    unsigned int ret;
+    spin_lock_irqsave(lock, flags);
+    ret = bsfifo_in(fifo, buf, len);
+    spin_unlock_irqrestore(lock, flags);
+    return ret;
 }
 
 static inline unsigned int bsfifo_peek_n(struct epfront_bs_fifo *fifo, unsigned int recsize)
 {
-	unsigned int l;
-	unsigned int mask = fifo->mask;
-	unsigned char *data = fifo->data;
+    unsigned int l;
+    unsigned int mask = fifo->mask;
+    unsigned char *data = fifo->data;
 
     l = ((data)[(fifo->out) & (mask)]);
 
-	if (--recsize)
-		l |= ( (data)[(fifo->out + 1) & (mask)] << 8 );
+    if (--recsize)
+        l |= ( (data)[(fifo->out + 1) & (mask)] << 8 );
 
-	return l;
+    return l;
 }
 
 static inline void bsfifo_copy_out(struct epfront_bs_fifo *fifo, void *dst,
-		unsigned int len, unsigned int off)
+        unsigned int len, unsigned int off)
 {
-	unsigned int size = fifo->mask + 1;
-	unsigned int l;
+    unsigned int size = fifo->mask + 1;
+    unsigned int l;
 
-	off &= fifo->mask;
+    off &= fifo->mask;
 
-	l = min(len, size - off);
-	memcpy((unsigned char*)dst, (unsigned char*)fifo->data + off, l);
-	memcpy((unsigned char*)dst + l, (unsigned char*)fifo->data, len - l);
-	
-	/*
-	 * make sure that the data is copied before
-	 * incrementing the fifo->out index counter
-	 */
-	smp_wmb();
+    l = min(len, size - off);
+    memcpy((unsigned char*)dst, (unsigned char*)fifo->data + off, l);
+    memcpy((unsigned char*)dst + l, (unsigned char*)fifo->data, len - l);
+
+    /*
+     * make sure that the data is copied before
+     * incrementing the fifo->out index counter
+     */
+    smp_wmb();
 }
 
 static inline unsigned int bsfifo_out_copy_r(struct epfront_bs_fifo *fifo,
-	void *buf, unsigned int len, unsigned int recsize, unsigned int *n)
+    void *buf, unsigned int len, unsigned int recsize, unsigned int *n)
 {
-	*n = bsfifo_peek_n(fifo, recsize);
+    *n = bsfifo_peek_n(fifo, recsize);
 
-	if (len > *n)
-		len = *n;
+    if (len > *n)
+        len = *n;
 
-	bsfifo_copy_out(fifo, buf, len, fifo->out + recsize);
-	return len;
+    bsfifo_copy_out(fifo, buf, len, fifo->out + recsize);
+    return len;
 }
 
 static inline unsigned int bsfifo_out(struct epfront_bs_fifo* fifo, void* buf, unsigned int len)
 {
-	unsigned int n;
+    unsigned int n;
 
-	if (fifo->in == fifo->out)
-		return 0;
+    if (fifo->in == fifo->out)
+        return 0;
 
-	len = bsfifo_out_copy_r(fifo, buf, len, fifo->recsize, &n);
-	fifo->out += n + fifo->recsize;
-	return len;
+    len = bsfifo_out_copy_r(fifo, buf, len, fifo->recsize, &n);
+    fifo->out += n + fifo->recsize;
+    return len;
 }
 
 static inline unsigned int bsfifo_out_spinlocked(struct epfront_bs_fifo* fifo, void* buf,unsigned int len, spinlock_t* lock)
 {
-	unsigned long flags;
-	unsigned int ret;
-	spin_lock_irqsave(lock, flags);
-	ret = bsfifo_out(fifo, buf, len);
-	spin_unlock_irqrestore(lock, flags);
-	return ret;
+    unsigned long flags;
+    unsigned int ret;
+    spin_lock_irqsave(lock, flags);
+    ret = bsfifo_out(fifo, buf, len);
+    spin_unlock_irqrestore(lock, flags);
+    return ret;
 }
 
 #endif

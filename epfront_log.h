@@ -59,10 +59,10 @@ typedef enum
 #define epfront_info(fmt, ...) do{\
         if(epfront_loglevel >= EPFRONT_LOG_INFO) (void)printk(KERN_NOTICE PREFIX "[INFO][%s][%d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__);\
     } while (0)
-    
+
 #define epfront_info_limit(fmt, ...) do{\
-		if(epfront_loglevel >= EPFRONT_LOG_INFO && printk_ratelimit()) (void)printk(KERN_NOTICE PREFIX "[INFO][%s][%d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__);\
-	} while (0)
+        if(epfront_loglevel >= EPFRONT_LOG_INFO && printk_ratelimit()) (void)printk(KERN_NOTICE PREFIX "[INFO][%s][%d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__);\
+    } while (0)
 
 #define epfront_dbg(fmt, ...) do{\
         if(epfront_loglevel >= EPFRONT_LOG_DEBUG) (void)printk(KERN_DEBUG PREFIX "[DEBUG][%s][%d]: " fmt "\n", __FUNCTION__, __LINE__, ##__VA_ARGS__);\

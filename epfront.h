@@ -87,29 +87,29 @@
 
 static inline void print_data(char *data, unsigned int len)
 {
-	unsigned int i,offset;
-	char print_buf[16];
+    unsigned int i,offset;
+    char print_buf[16];
 
-	offset = len & 0xf;
+    offset = len & 0xf;
 
-	epfront_err_limit("data len %d, offset %d", len, offset);
-	for(i =0 ; i< (len >> 4); i++){
-		epfront_err_limit("%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x"
-				,data[(long)i*16],data[(long)i*16+1],data[(long)i*16+2],data[(long)i*16+3]
-				,data[(long)i*16+4],data[(long)i*16+5],data[(long)i*16+6],data[(long)i*16+7]
-				,data[(long)i*16+8],data[(long)i*16+9],data[(long)i*16+10],data[(long)i*16+11]
-				,data[(long)i*16+12],data[(long)i*16+13],data[(long)i*16+14],data[(long)i*16+15]);
-	}
+    epfront_err_limit("data len %d, offset %d", len, offset);
+    for(i =0 ; i< (len >> 4); i++){
+        epfront_err_limit("%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x"
+                ,data[(long)i*16],data[(long)i*16+1],data[(long)i*16+2],data[(long)i*16+3]
+                ,data[(long)i*16+4],data[(long)i*16+5],data[(long)i*16+6],data[(long)i*16+7]
+                ,data[(long)i*16+8],data[(long)i*16+9],data[(long)i*16+10],data[(long)i*16+11]
+                ,data[(long)i*16+12],data[(long)i*16+13],data[(long)i*16+14],data[(long)i*16+15]);
+    }
 
-	if(offset){
-		memset((void*)print_buf, 0, 16);
-		memcpy(print_buf,&data[(long)(len - offset)],offset);
-		epfront_err_limit("%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x"
-				,print_buf[0],print_buf[1],print_buf[2],print_buf[3]
-				,print_buf[4],print_buf[5],print_buf[6],print_buf[7]
-				,print_buf[8],print_buf[9],print_buf[10],print_buf[11]
-				,print_buf[12],print_buf[13],print_buf[14],print_buf[15]);
-	}
+    if(offset){
+        memset((void*)print_buf, 0, 16);
+        memcpy(print_buf,&data[(long)(len - offset)],offset);
+        epfront_err_limit("%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x\t%2x %2x %2x %2x"
+                ,print_buf[0],print_buf[1],print_buf[2],print_buf[3]
+                ,print_buf[4],print_buf[5],print_buf[6],print_buf[7]
+                ,print_buf[8],print_buf[9],print_buf[10],print_buf[11]
+                ,print_buf[12],print_buf[13],print_buf[14],print_buf[15]);
+    }
 }
 
 static inline unsigned long get_ns_time(void)
@@ -123,13 +123,13 @@ static inline unsigned long get_ns_time(void)
 #if (LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32) && !defined(RHEL_RELEASE))
 static inline bool __must_check IS_ERR_OR_NULL(const void *ptr)
 {
-	return !ptr || IS_ERR(ptr);
+    return !ptr || IS_ERR(ptr);
 }
 
 #define for_each_set_bit(bit, addr, size) \
-		for ((bit) = find_first_bit((addr), (size));		\
-			 (bit) < (size);					\
-			 (bit) = find_next_bit((addr), (size), (bit) + 1))	 
+        for ((bit) = find_first_bit((addr), (size));        \
+             (bit) < (size);                    \
+             (bit) = find_next_bit((addr), (size), (bit) + 1))
 #endif
 
 #endif
