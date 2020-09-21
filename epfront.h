@@ -115,7 +115,7 @@ static inline unsigned long get_ns_time(void)
 {
 #if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
     return ktime_get();
-#elif
+#else
     struct timespec now;
     getnstimeofday(&now);
     return timespec_to_ns(&now);
