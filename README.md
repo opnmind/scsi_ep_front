@@ -11,6 +11,27 @@ The device driver supports specific Huawei SDI add-in cards (SD100EP - 19e5:1610
 - elfutils-libelf-devel
 - binutils
 
+```shell
+# SUSE based
+$ sudo zypper in kernel-source kernel-default-devel dos2unix binutils make gcc
+
+# yum/dnf based
+$ sudo dnf install kernel-headers kernel-devel dos2unix binutils make gcc
+
+# debain based
+$ sudo apt install linux-headers-$(uname -r) linux-source dos2unix binutils make gcc
+```
+
+```shell
+# build kernel module
+$ make 
+
+# clean up directory
+$ make clean
+
+$ [sudo] modinfo ./scsi_ep_front.ko
+```
+
 ## Target of this clone repo
 
 - Reorganisation of the original repository https://github.com/SDI-Drivers/scsi_ep_front.
