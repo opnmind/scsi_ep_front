@@ -32,10 +32,21 @@ $ make clean
 $ [sudo] modinfo ./scsi_ep_front.ko
 ```
 
+Sometimes there is a missing or defect symlink under `/lib/modules/$(uname -r)/` for `build`:
+
+```shell
+$ cd /lib/modules/$(uname -r)/
+$ ls -al
+$ sudo unlink build
+$ sudo ln -s /usr/src/kernels/$(uanme -r) build
+```
+
 ## Target of this clone repo
 
 - Reorganisation of the original repository https://github.com/SDI-Drivers/scsi_ep_front.
 - Fixing some errors and make the kernel module compatibel with newer kernels.
+
+---
 
 > SD100 Card Driver Project version: SD100 V100R001C00SPC106B010 
 
