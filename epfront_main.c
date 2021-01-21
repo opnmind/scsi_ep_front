@@ -2603,9 +2603,8 @@ static int epfront_slave_alloc(struct scsi_device *sdev)
 {
 #ifdef QUEUE_FLAG_BIDI
     set_bit(QUEUE_FLAG_BIDI, &sdev->request_queue->queue_flags);
-#else
-    return 0;
 #endif
+    return 0;
 }
 
 /* [zr] slave_configure <- scsi_add_lun <- scsi_probe_and_add_lun <-
