@@ -2284,12 +2284,26 @@ static int epfront_io_send(struct epfront_cmnd_list* c, struct epfront_main_info
     if(smain->global_config.crc32 && sc->sc_data_direction == DMA_TO_DEVICE)
         crc32_data = crc_calc_scsi_data(sc);
 
+    if(unlikely(!h)){
+        //only occurs when the position of c is reused
+        epfront_err_limit("h is NULL");
+        return 0;
+    }
+
     io.io_index            = cpu_to_le16((__u16)c->cmd_index);
     io.back_uniq_id        = cpu_to_le16((__u16)c->back_uniq_id);
     io.crc32               = cpu_to_le32(crc32_data);
     io.crc32_sgl           = cpu_to_le32(crc32_sgl);
-    io.sense_buffer_phy    = cpu_to_le64((dma_addr_t)(c->psense_buffer_phy));
+    io.sense_buffer_phy    = cpu_to_le64((dma_addr_t)(c->psense_buffer_phy));    
+    /** 
+     *   struct request isn't anymore available in kernel 5.15.0 under scsi_cmnd.h 
+     *   -> switch to global config request timeout 
+     */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+    io.timeout             = cpu_to_le16((__u16)(h->smain->global_config.rq_timeout / HZ));
+#else
     io.timeout             = cpu_to_le16((__u16)(sc->request->timeout / HZ));
+#endif
 
     c_cmd_index = c->cmd_index;
     c_cmd_sn = c->cmd_sn;
