@@ -3580,7 +3580,7 @@ static int sdi_pf12_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
     UNREFERENCE_PARAM(id);
 
-    sdev->use_threaded_interrupts = 1;
+    sdev->use_threaded_interrupts = 0;
     epfront_info("Sdi card number: %d", pfcnt/PF_NUM_PER_PCIE_DEV);
 
     smain = epfront_get_main_info(pfcnt/PF_NUM_PER_PCIE_DEV);
