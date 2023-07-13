@@ -2299,7 +2299,7 @@ static int epfront_io_send(struct epfront_cmnd_list* c, struct epfront_main_info
      *   struct request isn't anymore available in kernel 5.15.0 under scsi_cmnd.h 
      *   -> switch to global config request timeout 
      */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 20))
     io.timeout             = cpu_to_le16((__u16)(h->smain->global_config.rq_timeout / HZ));
 #else
     io.timeout             = cpu_to_le16((__u16)(sc->request->timeout / HZ));
@@ -2482,7 +2482,9 @@ SET_RESULT:
 
     free_cmd_resource(c, smain);
     /* report result of scsi command */
-    sc->scsi_done(sc);
+    if (sc)
+	scsi_done(sc);
+        /*sc->scsi_done(sc);*/
 
     set_bit(CMD_STAT_DONE, &c->status);
     //if(waitqueue_active(&wait)) {
@@ -2754,9 +2756,9 @@ Output      : int
 Return      : 0-success or error code of scsi middle layer
 *****************************************************************************/
 #ifdef DEF_SCSI_QCMD
-static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
+static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc)
 #else
-static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
+static int epfront_scsi_queue_command(struct scsi_cmnd *sc)
 #endif
 {
     int ret = 0;
@@ -2773,7 +2775,7 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         epfront_err_limit("h is NULL");
 
         sc->result = (DID_ERROR << 16);
-        done(sc);
+        scsi_done(sc);
         return 0;
     }
 
@@ -2781,7 +2783,7 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
     if (unlikely(!spmain)){
         epfront_err_limit("spmain is NULL");
         sc->result = (DID_ERROR << 16);
-        done(sc);
+        scsi_done(sc);
         return 0;
     }
 
@@ -2796,7 +2798,7 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         epfront_err_limit("queue is off, epfront_status[0x%lx], lun back_uniq_id[%u]",
             spmain->epfront_status, lun_lst->back_uniq_id);
         sc->result = (DID_SOFT_ERROR << 16);
-        done(sc);
+        scsi_done(sc);
         goto out;
     }
 
@@ -2805,14 +2807,14 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
             epfront_ctrl_get_host_no(h), sdev->channel, sdev->id, (u64)sdev->lun);
 
         sc->result = (DID_SOFT_ERROR << 16);
-        done(sc);
+        scsi_done(sc);
         goto out;
     }
 
     if(INVALID_BACK_ID == lun_lst->back_uniq_id){
         //epfront_err_limit("illegal back_uniq_id[%d]", lun_lst->back_uniq_id);
         sc->result = (DID_BAD_TARGET << 16);
-        done(sc);
+        scsi_done(sc);
         goto out;
     }
 
@@ -2823,7 +2825,7 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         goto out;
     }
 
-    sc->scsi_done = done;
+    scsi_done(sc);
     //save c for abort
     sc->host_scribble = (unsigned char *)c;
 
@@ -5193,7 +5195,7 @@ static void epfront_host_handle_pending_io(struct epfront_host_ctrl* h, struct e
             sc->result = (DID_SOFT_ERROR << 16);
             ++softerr_count;
         }
-        sc->scsi_done(sc);
+        scsi_done(sc);
 
         set_bit(CMD_STAT_DONE, &c->status);
         wake_up(&(smain->wait));
