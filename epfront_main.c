@@ -1703,8 +1703,15 @@ static int filldir_find(void * __buf, const char * name, int len,
 {
     struct epfront_getdents* dents = (struct epfront_getdents*)__buf;
 #else
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0))
+static bool filldir_find(struct dir_context *ctx, const char *name, int len,
+		            loff_t pos, u64 ino, unsigned int d_type)
+#else
 static int filldir_find(struct dir_context *ctx, const char *name, int len,
             loff_t pos, u64 ino, unsigned int d_type)
+#endif
+
 {
     struct epfront_getdents *dents =
         container_of(ctx, struct epfront_getdents, ctx);
@@ -2299,7 +2306,7 @@ static int epfront_io_send(struct epfront_cmnd_list* c, struct epfront_main_info
      *   struct request isn't anymore available in kernel 5.15.0 under scsi_cmnd.h 
      *   -> switch to global config request timeout 
      */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || (CONFIG_SUSE_PATCHLEVEL >= 5)
     io.timeout             = cpu_to_le16((__u16)(h->smain->global_config.rq_timeout / HZ));
 #else
     io.timeout             = cpu_to_le16((__u16)(sc->request->timeout / HZ));
@@ -2481,8 +2488,13 @@ SET_RESULT:
         scsi_set_resid(sc, 0);
 
     free_cmd_resource(c, smain);
+
     /* report result of scsi command */
+    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1)
+    scsi_done(sc);     
+    #else
     sc->scsi_done(sc);
+    #endif
 
     set_bit(CMD_STAT_DONE, &c->status);
     //if(waitqueue_active(&wait)) {
@@ -2754,9 +2766,21 @@ Output      : int
 Return      : 0-success or error code of scsi middle layer
 *****************************************************************************/
 #ifdef DEF_SCSI_QCMD
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc)
+#else
 static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
+#endif
+
+#else
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+static int epfront_scsi_queue_command(struct scsi_cmnd *sc)
 #else
 static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
+#endif
+
 #endif
 {
     int ret = 0;
@@ -2773,16 +2797,28 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         epfront_err_limit("h is NULL");
 
         sc->result = (DID_ERROR << 16);
-        done(sc);
-        return 0;
+        
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
+	done(sc);
+        #else
+	scsi_done(sc);
+        #endif
+        
+	return 0;
     }
 
     spmain = h->smain;
     if (unlikely(!spmain)){
         epfront_err_limit("spmain is NULL");
         sc->result = (DID_ERROR << 16);
+        
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
         done(sc);
-        return 0;
+        #else
+        scsi_done(sc);
+        #endif
+
+	return 0;
     }
 
 #ifndef __CHECKER__
@@ -2796,7 +2832,13 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         epfront_err_limit("queue is off, epfront_status[0x%lx], lun back_uniq_id[%u]",
             spmain->epfront_status, lun_lst->back_uniq_id);
         sc->result = (DID_SOFT_ERROR << 16);
+
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
         done(sc);
+        #else
+        scsi_done(sc);
+        #endif
+
         goto out;
     }
 
@@ -2805,14 +2847,26 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
             epfront_ctrl_get_host_no(h), sdev->channel, sdev->id, (u64)sdev->lun);
 
         sc->result = (DID_SOFT_ERROR << 16);
+
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
         done(sc);
+	#else
+        scsi_done(sc);
+        #endif
+
         goto out;
     }
 
     if(INVALID_BACK_ID == lun_lst->back_uniq_id){
         //epfront_err_limit("illegal back_uniq_id[%d]", lun_lst->back_uniq_id);
         sc->result = (DID_BAD_TARGET << 16);
+
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
         done(sc);
+        #else
+        scsi_done(sc);
+        #endif
+
         goto out;
     }
 
@@ -2823,7 +2877,12 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         goto out;
     }
 
-    sc->scsi_done = done;
+    #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
+    sc->scsi_done(sc);
+    #else
+    scsi_done(sc);
+    #endif
+
     //save c for abort
     sc->host_scribble = (unsigned char *)c;
 
@@ -5193,7 +5252,11 @@ static void epfront_host_handle_pending_io(struct epfront_host_ctrl* h, struct e
             sc->result = (DID_SOFT_ERROR << 16);
             ++softerr_count;
         }
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
         sc->scsi_done(sc);
+        #else
+        scsi_done(sc);
+        #endif
 
         set_bit(CMD_STAT_DONE, &c->status);
         wake_up(&(smain->wait));
