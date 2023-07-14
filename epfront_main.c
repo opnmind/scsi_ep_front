@@ -2306,7 +2306,7 @@ static int epfront_io_send(struct epfront_cmnd_list* c, struct epfront_main_info
      *   struct request isn't anymore available in kernel 5.15.0 under scsi_cmnd.h 
      *   -> switch to global config request timeout 
      */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || (CONFIG_SUSE_PATCHLEVEL >= 5)
     io.timeout             = cpu_to_le16((__u16)(h->smain->global_config.rq_timeout / HZ));
 #else
     io.timeout             = cpu_to_le16((__u16)(sc->request->timeout / HZ));
