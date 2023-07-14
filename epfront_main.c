@@ -2489,7 +2489,11 @@ SET_RESULT:
 
     free_cmd_resource(c, smain);
     /* report result of scsi command */
+    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
     scsi_done(sc);
+    #else
+    sc->scsi_done(sc);
+    #endif
 
     set_bit(CMD_STAT_DONE, &c->status);
     //if(waitqueue_active(&wait)) {
