@@ -2306,7 +2306,7 @@ static int epfront_io_send(struct epfront_cmnd_list* c, struct epfront_main_info
      *   struct request isn't anymore available in kernel 5.15.0 under scsi_cmnd.h 
      *   -> switch to global config request timeout 
      */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || (CONFIG_SUSE_PATCHLEVEL >= 5)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) || ((CONFIG_SUSE_VERSION >= 15) && (CONFIG_SUSE_PATCHLEVEL >= 5))
     io.timeout             = cpu_to_le16((__u16)(h->smain->global_config.rq_timeout / HZ));
 #else
     io.timeout             = cpu_to_le16((__u16)(sc->request->timeout / HZ));
@@ -2490,7 +2490,7 @@ SET_RESULT:
     free_cmd_resource(c, smain);
 
     /* report result of scsi command */
-    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1)
+    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
     scsi_done(sc);     
     #else
     sc->scsi_done(sc);
@@ -2767,7 +2767,7 @@ Return      : 0-success or error code of scsi middle layer
 *****************************************************************************/
 #ifdef DEF_SCSI_QCMD
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
 static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc)
 #else
 static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
@@ -2775,7 +2775,7 @@ static int epfront_scsi_queue_command_lck(struct scsi_cmnd *sc, void (*done)(str
 
 #else
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
 static int epfront_scsi_queue_command(struct scsi_cmnd *sc)
 #else
 static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct scsi_cmnd *))
@@ -2798,10 +2798,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
 
         sc->result = (DID_ERROR << 16);
         
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-	done(sc);
+        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
+        scsi_done(sc);
         #else
-	scsi_done(sc);
+	done(sc);
         #endif
         
 	return 0;
@@ -2812,10 +2812,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         epfront_err_limit("spmain is NULL");
         sc->result = (DID_ERROR << 16);
         
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-        done(sc);
-        #else
+        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
         scsi_done(sc);
+        #else
+        done(sc);
         #endif
 
 	return 0;
@@ -2833,10 +2833,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
             spmain->epfront_status, lun_lst->back_uniq_id);
         sc->result = (DID_SOFT_ERROR << 16);
 
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-        done(sc);
-        #else
+        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
         scsi_done(sc);
+        #else
+        done(sc);
         #endif
 
         goto out;
@@ -2848,10 +2848,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
 
         sc->result = (DID_SOFT_ERROR << 16);
 
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-        done(sc);
-	#else
+        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
         scsi_done(sc);
+        #else
+        done(sc);
         #endif
 
         goto out;
@@ -2861,10 +2861,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         //epfront_err_limit("illegal back_uniq_id[%d]", lun_lst->back_uniq_id);
         sc->result = (DID_BAD_TARGET << 16);
 
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-        done(sc);
-        #else
+        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
         scsi_done(sc);
+        #else
+        done(sc);
         #endif
 
         goto out;
@@ -2877,10 +2877,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         goto out;
     }
 
-    #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-    sc->scsi_done(sc);
-    #else
+    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))    
     scsi_done(sc);
+    #else
+    sc->scsi_done(sc);
     #endif
 
     //save c for abort
@@ -5252,10 +5252,11 @@ static void epfront_host_handle_pending_io(struct epfront_host_ctrl* h, struct e
             sc->result = (DID_SOFT_ERROR << 16);
             ++softerr_count;
         }
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)) || (CONFIG_UBUNTU_HOST_MODULE == 1)
-        sc->scsi_done(sc);
-        #else
+        
+        #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
         scsi_done(sc);
+        #else 
+        sc->scsi_done(sc);
         #endif
 
         set_bit(CMD_STAT_DONE, &c->status);
