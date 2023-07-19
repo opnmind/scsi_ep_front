@@ -2862,7 +2862,7 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
         sc->result = (DID_BAD_TARGET << 16);
 
         #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))
-        scsi_done(sc);
+        scsi_done(sc); /* Notify system DONE           */
         #else
         done(sc);
         #endif
@@ -2878,9 +2878,10 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
     }
 
     #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))    
-    scsi_done(sc);
+    /* Save done function not needed anymore */
     #else
-    sc->scsi_done(sc);
+    /* Save done function into scsi_cmnd struct */
+    sc->scsi_done = done;
     #endif
 
     //save c for abort
