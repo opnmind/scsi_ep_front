@@ -2880,7 +2880,7 @@ static int epfront_scsi_queue_command(struct scsi_cmnd *sc, void (*done)(struct 
     #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)) && (CONFIG_UBUNTU_HOST_MODULE != 1) || ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL == 5))    
     scsi_done(sc);
     #else
-    sc->scsi_done(sc);
+    sc->scsi_done = done;
     #endif
 
     //save c for abort
